@@ -62,15 +62,15 @@ class Generator(nn.Module):
             PixelNorm(),
         )
         
-        self.initial_rgb = nn.Conv2d(in_channels, img_channels, kernel_size=1, stride=1)
+        self.initial_rgb = nn.Conv2d(in_channels, img_channels, kernel_size=1, stride=1, padding=0)
         
-        self.prog_blocks, self.rgb_layers = nn.ModuleList(), nn.ModuleList(self.initial_rgb)
+        self.prog_blocks, self.rgb_layers = nn.ModuleList(), nn.ModuleList([self.initial_rgb])
         
         for i in range(len(factors) - 1):
             conv_in_channels = int(in_channels * factors[i])
             conv_out_channels = int(in_channels * factors[i + 1])
             self.prog_blocks.append(ConvBlock(conv_in_channels, conv_out_channels))
-            self.rgb_layers.append(nn.Conv2d(conv_out_channels, img_channels, kernel_size=1, stride=1))
+            self.rgb_layers.append(WSConv2d(conv_out_channels, img_channels, kernel_size=1, stride=1, padding=0))
         
         
     def fade_in(self, alpha, upscaled, generated):
@@ -93,7 +93,7 @@ class Generator(nn.Module):
         
 
 class Discriminator(nn.Module):
-    def __init__(self, z_dim, in_channels, img_channels=3):
+    def __init__(self, in_channels, img_channels=3):
         super().__init__()
         self.prog_blocks, self.rgb_layers = nn.ModuleList(), nn.ModuleList()
         self.leaky = nn.LeakyReLU(0.2)
@@ -102,12 +102,14 @@ class Discriminator(nn.Module):
             conv_in_channels = int(in_channels * factors[i])
             conv_out_channels = int(in_channels * factors[i - 1])
             self.prog_blocks.append(ConvBlock(conv_in_channels, conv_out_channels, use_pixel_norm=False))
-            self.rgb_layers.append(nn.Conv2d(img_channels, conv_in_channels, kernel_size=1, stride=1))
+            self.rgb_layers.append(WSConv2d(img_channels, conv_in_channels, kernel_size=1, stride=1, padding=0))
         
-        self.initial_rgb = nn.WSConv2d(img_channels, in_channels, kernel_size=1, stride=1)
+        #this is for he 4x4 img resolution
+        self.initial_rgb = WSConv2d(img_channels, in_channels, kernel_size=1, stride=1, padding=0)
         self.rgb_layers.append(self.initial_rgb)
         self.avg_pool = nn.AvgPool2d(kernel_size=2, stride=2)
         
+        #block for the 4x4 resolution
         self.final_block = nn.Sequential(
             WSConv2d(in_channels+1, in_channels, kernel_size=3, stride=1, padding=1),
             nn.LeakyReLU(0.2),
@@ -144,6 +146,24 @@ class Discriminator(nn.Module):
             
         out = self.minibatch_std(out)
         return self.final_block(out).view(x.shape[0], -1)
+    
+    
+if __name__ == '__main__':
+    z_dim = 512
+    in_channels = 512
+    img_channels = 3
+    batch_size = 16
+    steps = 2
+    alpha = 0.5
+    
+    g = Generator(z_dim, in_channels, img_channels)
+    d = Discriminator(z_dim, in_channels, img_channels)
+    
+    z = torch.randn(batch_size, z_dim, 1, 1)
+    x = torch.randn(batch_size, img_channels, 2**steps * 4, 2**steps * 4)
+    
+    print(g(z, steps, alpha).shape)
+    print(d(x, steps, alpha).shape)
         
             
             
