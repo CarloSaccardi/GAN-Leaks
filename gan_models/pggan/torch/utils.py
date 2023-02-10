@@ -5,6 +5,9 @@ import os
 import torchvision
 from torchvision.utils import save_image
 
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 def gradient_penalty(critic, real, fake, alpha, step, device):
     BATCH_SIZE, C, H, W = real.shape
     epsilon = torch.rand([BATCH_SIZE, 1, 1, 1]).repeat(1, C, H, W).to(device)
@@ -27,3 +30,6 @@ def gradient_penalty(critic, real, fake, alpha, step, device):
     gp = torch.mean((gradient_norm - 1) ** 2)
     
     return gp
+
+
+    

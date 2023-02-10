@@ -2,12 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from math import log2
+import torchvision
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from math import log2
 from tqdm import tqdm
 import argparse
+import os
+import wandb
+import warnings
+import yaml
 
 from model_torch import Generator, Discriminator
 from utils import gradient_penalty
@@ -22,7 +27,9 @@ parser.add_argument('--nz', type=int, default=100, help='size of the latent z ve
 parser.add_argument('--in_channels', type=int, default=512, help='number of generator filters in first conv layer, default=256')
 parser.add_argument('--start_img_size', type=int, default=4, help='starting image size, default=4')
 parser.add_argument('--lambda_gp', type=float, default=10, help='lambda for gradient penalty')
-parser.add_argument('--data_path', type=str, default='data', help='path to the dataset')
+parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
+parser.add_argument('--local_config', default=None, help='path to config file')
+parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -43,9 +50,9 @@ def get_loader(imge_size):
     ])
     
     batch_size = args.batch_size[int(log2(imge_size) / 4)]
-    
-    dataset = datasets.ImageFolder(root='data', transform=transform)
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    data_path = os.path.join('data', args.data_name)
+    dataset = datasets.ImageFolder(root=data_path, transform=transform)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     return loader, dataset
     
 
@@ -65,7 +72,7 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
             critic_real = critic(real,  step, alpha)
             critic_fake = critic(fake.detach(), step, alpha)
             
-            gp = gradient_penalty(critic, real, fake, step, alpha)
+            gp = gradient_penalty(critic, real, fake, alpha, step, device)
             loss_critic = (
                 -(torch.mean(critic_real) - torch.mean(critic_fake)) 
                 + args.lambda_gp * gp
@@ -73,7 +80,7 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
                )
              
         opt_critic.zero_grad()
-        scaler_critic.scale(loss_critic).backward() 
+        scaler_critic.scale(loss_critic).backward(retain_graph=True) #retain_graph=True to be able to backprop the generator
         scaler_critic.step(opt_critic)
         scaler_critic.update()
          
@@ -82,9 +89,9 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
             gen_fake = critic(fake, step, alpha)
             loss_gen = -torch.mean(gen_fake)
            
-        opt_critic.zero_grad()
-        scaler_critic.scale(loss_gen).backward()
-        scaler_critic.step(opt_critic)
+        opt_gen.zero_grad()
+        scaler_gen.scale(loss_gen).backward()
+        scaler_gen.step(opt_gen)
         scaler_gen.update()
         
         alpha += cur_batch_size / (len(loader.dataset) * PROGRESSIVE_EPOCHS[step] * 0.5)
@@ -94,6 +101,7 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
         
 
 def main():
+    print(args)
     gen = Generator(args.nz, args.in_channels, args.nc).to(device)
     critic = Discriminator(args.in_channels, args.nc).to(device)
     
@@ -110,11 +118,11 @@ def main():
     step = int(log2(args.start_img_size / 4))
     
     for num_epochs in PROGRESSIVE_EPOCHS[step:]:
-        alpha = 1e-5
+        alpha = 1e-5 #increase to 1 over the course of the epoch
         loader, dataset = get_loader(4*2**step)
-        print(f"iamge resolution: {4*2**step}x{4*2**step}")
+        print(f"image resolution: {4*2**step}x{4*2**step}")
         
-        loss_critic, loss_gen, alpha = train_fn(critic, 
+        loss_CRITIC, loss_GEN, alpha = train_fn(critic, 
                                                 gen, 
                                                 step, 
                                                 alpha, 
@@ -124,12 +132,44 @@ def main():
                                                 scaler_gen, 
                                                 loader)
         
-        #TODO: add wandb logging and save the model
+        #print the losses for every epoch
+        print(f"loss_critic: {loss_CRITIC}, loss_gen: {loss_GEN}")
+
+        #wandb logging and save the model
+        if args.wandb:
+            wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
+            torch.save(gen.state_dict(), os.path.join(wandb.run.dir, f"gen_{step}.pth"))
+            torch.save(critic.state_dict(), os.path.join(wandb.run.dir, f"critic_{step}.pth"))
+
+            #visualize progress after every epoch in wandb
+            with torch.no_grad():
+                fake = gen(FIXED_NOISE, step, alpha)
+                grid = torchvision.utils.make_grid(fake)
+                wandb.log({"progress": [wandb.Image(grid, caption=f"step: {step}, alpha: {alpha}")]})
         
     step += 1
         
-        
+
+
+
+
+def update_args(args, config_dict):
+    for key, val in config_dict.items():
+        setattr(args, key, val)  
+
 
 if __name__ == '__main__':
+
+    if args.local_config is not None:
+        with open(str(args.local_config), "r") as f:
+            config = yaml.safe_load(f)
+        update_args(args, config)
+        if args.wandb:
+            wandb_config = vars(args)
+            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
+            # update_args(args, dict(run.config))
+    else:
+        warnings.warn("No config file was provided. Using default parameters.")
+
     main()
 
