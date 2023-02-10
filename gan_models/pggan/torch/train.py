@@ -21,10 +21,13 @@ parser.add_argument('--nc', type=int, default=3, help='number of color channels 
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector, default=100')
 parser.add_argument('--in_channels', type=int, default=512, help='number of generator filters in first conv layer, default=256')
 parser.add_argument('--start_img_size', type=int, default=4, help='starting image size, default=4')
-parser.add_argument('lambda_gp', type=float, default=10, help='lambda for gradient penalty')
+parser.add_argument('--lambda_gp', type=float, default=10, help='lambda for gradient penalty')
+parser.add_argument('--data_path', type=str, default='data', help='path to the dataset')
 
-torch.backends.cudnn.benchmark = True #improves the speed of the model
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True #improves the speed of the model
 
 args = parser.parse_args()
 PROGRESSIVE_EPOCHS = [20]*len(args.batch_size)
@@ -39,7 +42,7 @@ def get_loader(imge_size):
         transforms.Normalize([0.5]*args.nc, [0.5]*args.nc)
     ])
     
-    batch_size = args.batch_size[int(log2(imge_size)) / 4]
+    batch_size = args.batch_size[int(log2(imge_size) / 4)]
     
     dataset = datasets.ImageFolder(root='data', transform=transform)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
