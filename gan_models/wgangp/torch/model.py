@@ -10,23 +10,23 @@ import numpy as np
     
     
 class Discriminator(nn.Module):
-    def __init__(self, input_size, hidden_size):
+    def __init__(self, img_channels, features_d):
         super(Discriminator, self).__init__()
         self.disc = nn.Sequential(
             # input is N x (nc) x 64 x 64
-            nn.Conv2d(input_size, hidden_size, kernel_size = 4, stride = 2, padding = 1, bias=False), # 32x32
-            nn.LeakyReLU(0.2, inplace=True),
-            self._block(hidden_size, hidden_size * 2, 4, 2, 1),# 16x16
-            self._block(hidden_size * 2, hidden_size * 4, 4, 2, 1),# 8x8
-            self._block(hidden_size * 4, hidden_size * 8, 4, 2, 1),# 4x4
-            nn.Conv2d(hidden_size * 8, 1, kernel_size = 4, stride = 2, padding = 0, bias=False), # 1x1
+            nn.Conv2d(img_channels, features_d, kernel_size = 4, stride = 2, padding = 1), # 32x32
+            nn.LeakyReLU(0.2),
+            self._block(features_d, features_d * 2, 4, 2, 1),# 16x16
+            self._block(features_d * 2, features_d * 4, 4, 2, 1),# 8x8
+            self._block(features_d * 4, features_d * 8, 4, 2, 1),# 4x4
+            nn.Conv2d(features_d * 8, 1, kernel_size = 4, stride = 2, padding = 0), # 1x1
         )
 
     def _block(self, in_channels, out_channels, kernel_size, stride, padding):
         return nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False),
             nn.InstanceNorm2d(out_channels, affine=True),#similar to layernorm 
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
         )
         
     def forward(self, x):

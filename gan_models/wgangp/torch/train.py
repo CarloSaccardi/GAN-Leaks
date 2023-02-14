@@ -82,14 +82,14 @@ def main():
                 gp = grandient_penalty(critic, real, fake, device=device)
                 critic_fake = critic(fake).reshape(-1)
                 critic_real = critic(real).reshape(-1)
-                loss = critic_fake.mean() - critic_real.mean() + args.lambda_gp * gp
+                loss_critic = critic_fake.mean() - critic_real.mean() + args.lambda_gp * gp
                 critic.zero_grad()
-                loss.backward(retain_graph=True)
+                loss_critic.backward(retain_graph=True)
                 opt_critic.step()
 
             # train generator --> min -E[critic(gen_fake)]
-            output = critic(fake).mean()
-            loss_gen = -output
+            output = critic(fake).reshape(-1)
+            loss_gen = -output.mean()
             gen.zero_grad()
             loss_gen.backward()
             opt_gen.step()
@@ -98,9 +98,9 @@ def main():
             if i % 50 == 0:
                 print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
                       % (epoch, args.num_epochs, i, len(dataloader),
-                         loss.item(), loss_gen.item()))
+                         loss_critic.item(), loss_gen.item()))
                 if args.wandb:
-                    wandb.log({"Loss_D": loss.item(), "Loss_G": loss_gen.item()})
+                    wandb.log({"Loss_D": loss_critic.item(), "Loss_G": loss_gen.item()})
                     # visualize progress in wandb
                     noise = torch.randn(64, args.nz, 1, 1, device=device)
                     fake = gen(noise).detach().cpu()
