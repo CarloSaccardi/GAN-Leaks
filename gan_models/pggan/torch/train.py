@@ -138,8 +138,8 @@ def main():
         #wandb logging and save the model
         if args.wandb:
             wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
-            torch.save(gen.state_dict(), os.path.join(wandb.run.dir, f"gen_{step}.pth"))
-            torch.save(critic.state_dict(), os.path.join(wandb.run.dir, f"critic_{step}.pth"))
+            #torch.save(gen.state_dict(), os.path.join(wandb.run.dir, f"gen_{step}.pth"))
+            #torch.save(critic.state_dict(), os.path.join(wandb.run.dir, f"critic_{step}.pth"))
 
             #visualize progress after every epoch in wandb
             with torch.no_grad():
