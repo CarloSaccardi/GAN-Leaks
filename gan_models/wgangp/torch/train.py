@@ -28,13 +28,15 @@ parser.add_argument('--nc', type=int, default=3, help='number of color channels 
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector, default=100')
 parser.add_argument('--ngf', type=int, default=64, help='number of generator filters in first conv layer, default=64')
 parser.add_argument('--ndf', type=int, default=64, help='number of discriminator filters in first conv layer, default=64')
-parser.add_argument('critic_iter', type=int, default=5, help='number of training iteration for the critic')
-parser.add_argument('lambda_gp', type=float, default=10, help='gradient penalty lambda hyperparameter')
+parser.add_argument('--critic_iter', type=int, default=5, help='number of training iteration for the critic')
+parser.add_argument('--lambda_gp', type=float, default=10, help='gradient penalty lambda hyperparameter')
 parser.add_argument('--num_epochs', type=int, default=5, help='number of training epochs, default=5')
-parser.add_argument('out_size', type=int, help='number of output images')
-parser.add_argument('beta1', type=float, help='beta1 for adam. default=0.0')
-parser.add_argument('beta2', type=float, help='beta2 for adam. default=0.9')
-parser.add_argument('dataroot', type=str, default=1, help='path to dataset')
+parser.add_argument('--out_size', type=int, help='number of output images')
+parser.add_argument('--beta1', type=float, default=0.0, help='beta1 for adam. default=0.0')
+parser.add_argument('--beta2', type=float, default=0.9, help='beta2 for adam. default=0.9')
+parser.add_argument('--dataroot', type=str, default=1, help='path to dataset')
+parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
+parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -42,21 +44,23 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 args = parser.parse_args()
 
 
-dataset = dset.ImageFolder(
-    root=args.dataroot, 
-    transforms = transforms.Compose([
+transform = transforms.Compose([
                 transforms.Resize(args.image_size),
                 transforms.ToTensor(),
-                transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)]),
-                    ])
-    )  
+                transforms.Normalize([0.5]*args.nc, [0.5]*args.nc),
+                    ]) 
+
+if args.data_name == 'miniCelebA':
+    transform =  transforms.Compose([ transforms.Resize((args.image_size, args.image_size)), transform ])
+
+dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
 
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
 def main():
     
     gen = Generator(args.nz, args.nc, args.ngf).to(device)
-    critic = Discriminator(args.nc, args.ndf, args.out_size).to(device)
+    critic = Discriminator(args.nc, args.ndf).to(device)
     initialize_weights(gen)
     initialize_weights(critic)
 
@@ -72,10 +76,13 @@ def main():
             real = data[0].to(device)
 
             for _ in range(args.critic_iter):
-                noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+                curr_batch = real.size(0)
+                noise = torch.randn(curr_batch, args.nz, 1, 1, device=device)
                 fake = gen(noise)
                 gp = grandient_penalty(critic, real, fake, device=device)
-                loss = critic(fake).mean() - critic(real).mean() + args.lambda_gp * gp
+                critic_fake = critic(fake).reshape(-1)
+                critic_real = critic(real).reshape(-1)
+                loss = critic_fake.mean() - critic_real.mean() + args.lambda_gp * gp
                 critic.zero_grad()
                 loss.backward(retain_graph=True)
                 opt_critic.step()
@@ -103,21 +110,23 @@ def main():
 
 def update_args(args, config_dict):
     for key, val in config_dict.items():
-        setattr(args, key, val)    
-    
+        setattr(args, key, val)  
+
+
 if __name__ == '__main__':
-    
+
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)
         update_args(args, config)
         if args.wandb:
             wandb_config = vars(args)
-            run = wandb.init(project=str(args.wandb), entity="THESIS", config=wandb_config)
+            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
             # update_args(args, dict(run.config))
     else:
         warnings.warn("No config file was provided. Using default parameters.")
-    main(args)
+
+    main()
    
         
 

@@ -6,6 +6,7 @@ def grandient_penalty(critic, real, fake, device="cpu"):
     epsilon = torch.rand((BATCH_SIZE, 1, 1, 1)).repeat(1, C, H, W).to(device)
     interpolated_images = real * epsilon + fake * (1 - epsilon)
 
+
     # Calculate critic scores
     mixed_scores = critic(interpolated_images)
 

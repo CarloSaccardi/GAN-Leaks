@@ -1,3 +1,6 @@
+
+.pyc
+.log
 # result & data folders
 */results
 *$results
