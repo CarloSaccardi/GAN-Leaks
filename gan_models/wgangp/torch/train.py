@@ -51,7 +51,7 @@ transform = transforms.Compose([
                     ]) 
 
 if args.data_name == 'miniCelebA':
-    transform =  transforms.Compose([ transforms.Resize((args.image_size, args.image_size)), transform ])
+    transform =  transforms.Compose([ transforms.Resize((args.image_size, args.image_size)), transform ])#miniCelebA is not cropped --> (71x64)
 
 dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
 

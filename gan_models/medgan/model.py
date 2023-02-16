@@ -4,14 +4,15 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset
 import os
-import sys
 
 
-class autoencoder(nn.Module):
+class Autoencoder(nn.Module):
     def __init__(self, input_size, hidden_size, binary=False):
-        super(autoencoder, self).__init__()
+        super(Autoencoder, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
 
@@ -48,12 +49,12 @@ class Generator(nn.Module):
         self.genDim = 128
         self.gen_block1 = nn.Sequential(
             nn.Linear(self.z_dim, self.hidden_size),
-            nn.BatchNorm1d(self.hidden_size, eps=0.001, momemntum=0.01),
+            nn.BatchNorm1d(self.hidden_size, eps=0.001, momentum=0.01),
             nn.ReLU()
         )
         self.gen_block2 = nn.Sequential(
             nn.Linear(self.hidden_size, self.genDim),
-            nn.BatchNorm1d(self.genDim, eps=0.001, momemntum=0.01),
+            nn.BatchNorm1d(self.genDim, eps=0.001, momentum=0.01),
             nn.Tanh()
         )
 
@@ -80,7 +81,7 @@ class Discriminator(nn.Module):
         self.hidden_size2 = hidden_size2 # 128
         self.minibatch_avarage = minibatch_avarage
 
-        ma_coeff = 1 if minibatch_avarage else 2
+        ma_coeff = 2 if minibatch_avarage else 1
 
         self.disc = nn.Sequential(
             nn.Linear(ma_coeff * self.input_size, self.hidden_size1),
@@ -99,43 +100,34 @@ class Discriminator(nn.Module):
             x = torch.cat([x, x_mean], dim=1)
         
         return self.disc(x)
-
-
-class Dataset:
-    def __init__(self, data_file, train=None, transform=None):
-
-        # Transform
-        self.transform = transform
+    
+        
+class CustomDataset(Dataset):
+    def __init__(self, csv_file, train=True):
         self.train = train
-
-        # load data here
-        self.input = np.load(os.path.expanduser(data_file), allow_pickle=True)
-        self.sampleSize = self.input.shape[0]
-        self.featureSize = self.input.shape[1]
-
-        # Split train-test
-        indices = np.random.permutation(self.sampleSize)
-        training_idx, test_idx = indices[:int(0.9 * self.sampleSize)], indices[int(0.9 * self.sampleSize):]
-        if self.train == True:
-            self.data = self.input[training_idx, :]
+        
+        # Load data from CSV file
+        self.data = pd.read_csv(os.path.expanduser(csv_file) , header=0)
+        
+        # Fill missing values with column median
+        self.data = self.data.fillna(self.data.median())
+        
+        # Split data into training and testing sets
+        train_data, test_data = train_test_split(self.data, test_size=0.1, random_state=42)
+        
+        if train:
+            self.data = train_data.reset_index(drop=True)
         else:
-            self.data = self.input[test_idx, :]
-
-    def return_data(self):
-        return self.data
-
+            self.data = test_data.reset_index(drop=True)
+            
     def __len__(self):
         return len(self.data)
+        
+    def __getitem__(self, index):
+        row = self.data.iloc[index].values
+        return torch.tensor(row, dtype=torch.float32)
 
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
+    
 
-        sample = self.data[idx]
-        sample = np.clip(sample, 0, 1)
 
-        if self.transform:
-           pass
-
-        return torch.from_numpy(sample)
 

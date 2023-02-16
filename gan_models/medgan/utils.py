@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 
 
 def generator_loss(y_fake, y_true):
@@ -8,7 +9,8 @@ def generator_loss(y_fake, y_true):
     Can be replaced with generator_loss = torch.nn.BCELoss(). Think why?
     """
     epsilon = 1e-12
-    return -0.5 * torch.mean(torch.log(y_fake + epsilon))
+    #loss = -0.5 * torch.mean(torch.log(y_fake + epsilon))
+    return -torch.mean(torch.log(y_fake + epsilon))
 
 
 def autoencoder_loss(x_output, y_target):
@@ -25,12 +27,13 @@ def autoencoder_loss(x_output, y_target):
     return loss
 
 
-def discriminator_loss(outputs, labels):
+def discriminator_loss(outputs_real, outputs_fake):
     """
     autoencoder_loss
     Cab be replaced with discriminator_loss = torch.nn.BCELoss(). Think why?
     """
-    loss = -torch.mean(labels * torch.log(outputs + 1e-12)) - torch.mean((1 - labels) * torch.log(1. - outputs + 1e-12))
+    #loss = -torch.mean(labels * torch.log(outputs + 1e-12)) - torch.mean((1 - labels) * torch.log(1. - outputs + 1e-12))
+    loss = -torch.mean(torch.log(outputs_real + 1e-12)) - torch.mean(torch.log(1. - outputs_fake + 1e-12))
     return loss
 
 
@@ -59,21 +62,18 @@ def sample_transform(sample):
     return sample
 
 
-def weights_init(m):
-    """
-    Custom weight initialization.
-    :param m: Input argument to extract layer type
-    :return: Initialized architecture
-    """
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
-    if type(m) == nn.Linear:
-        torch.nn.init.xavier_uniform_(m.weight)
-        m.bias.data.fill_(0.01)
+def init_weights(model, method='xavier_uniform', mean=0.0, std=0.02):
+    if method == 'xavier_uniform':
+        for module in model.modules():
+            if isinstance(module, nn.Linear):
+                init.xavier_uniform_(module.weight)
+    elif method == 'normal':
+        for module in model.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=mean, std=std)
+    else:
+        raise ValueError("Invalid initialization method. Please choose 'xavier_uniform' or 'normal'.")
+
 
 
 
