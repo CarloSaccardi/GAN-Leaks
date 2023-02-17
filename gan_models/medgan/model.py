@@ -74,14 +74,14 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, input_size, hidden_size1, hidden_size2, minibatch_avarage=False):
+    def __init__(self, input_size, hidden_size1, hidden_size2, minibatch_average=False):
         super(Discriminator, self).__init__()
         self.input_size = input_size
         self.hidden_size1 = hidden_size1 # 264
         self.hidden_size2 = hidden_size2 # 128
-        self.minibatch_avarage = minibatch_avarage
+        self.minibatch_average = minibatch_average
 
-        ma_coeff = 2 if minibatch_avarage else 1
+        ma_coeff = 2 if minibatch_average else 1
 
         self.disc = nn.Sequential(
             nn.Linear(ma_coeff * self.input_size, self.hidden_size1),
@@ -94,12 +94,14 @@ class Discriminator(nn.Module):
 
     def forward(self, x):
 
-        if self.minibatch_avarage:
+        if self.minibatch_average:
             ### minibatch averaging
             x_mean = torch.mean(x, dim=0).repeat(x.size(0), 1)
             x = torch.cat([x, x_mean], dim=1)
-        
+            x /= x.size(0)
+
         return self.disc(x)
+
     
         
 class CustomDataset(Dataset):

@@ -1,19 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.init as init
+import torch.nn.functional as F
 
 
-def generator_loss(y_fake, y_true):
+def generator_loss(y_fake):
     """
     Gen loss
     Can be replaced with generator_loss = torch.nn.BCELoss(). Think why?
     """
     epsilon = 1e-12
     #loss = -0.5 * torch.mean(torch.log(y_fake + epsilon))
-    return -torch.mean(torch.log(y_fake + epsilon))
+    loss = -torch.mean(torch.log(y_fake + epsilon))
+    return loss
 
 
-def autoencoder_loss(x_output, y_target):
+def autoencoder_loss(x_output, y_target, binary=True):
     """
     autoencoder_loss
     This implementation is equivalent to the following:
@@ -22,19 +24,23 @@ def autoencoder_loss(x_output, y_target):
     WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the later on, mean over both features and batches.
     """
     epsilon = 1e-12
-    term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
-    loss = torch.mean(-torch.sum(term, 1), 0)
+    if binary:
+        term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
+        loss = torch.mean(-torch.sum(term, 1), 0)
+    else:
+        loss = torch.mean(torch.sum((x_output - y_target) ** 2, 1), 0)
     return loss
+
 
 
 def discriminator_loss(outputs_real, outputs_fake):
-    """
-    autoencoder_loss
-    Cab be replaced with discriminator_loss = torch.nn.BCELoss(). Think why?
-    """
-    #loss = -torch.mean(labels * torch.log(outputs + 1e-12)) - torch.mean((1 - labels) * torch.log(1. - outputs + 1e-12))
-    loss = -torch.mean(torch.log(outputs_real + 1e-12)) - torch.mean(torch.log(1. - outputs_fake + 1e-12))
+    real_labels = torch.ones_like(outputs_real)
+    fake_labels = torch.zeros_like(outputs_fake)
+    real_loss = F.binary_cross_entropy_with_logits(outputs_real, real_labels)
+    fake_loss = F.binary_cross_entropy_with_logits(outputs_fake, fake_labels)
+    loss = real_loss + fake_loss
     return loss
+
 
 
 def discriminator_accuracy(predicted, y_true):
@@ -44,10 +50,9 @@ def discriminator_accuracy(predicted, y_true):
     :param y_true: The gorund truth labels
     :return: Accuracy
     """
-    total = y_true.size(0)
-    correct = (torch.abs(predicted - y_true) <= 0.5).sum().item()
-    print('correct=', correct)
-    accuracy = 100.0 * correct / total
+    predicted = predicted > 0.5
+    accuracy = torch.mean((predicted == y_true).float())
+
     return accuracy
 
 

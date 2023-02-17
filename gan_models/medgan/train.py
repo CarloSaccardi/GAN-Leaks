@@ -84,7 +84,7 @@ def main():
     discriminator = Discriminator(input_size=train_dataset.data.shape[1], 
                                   hidden_size1=opt.hidden_disc1, 
                                   hidden_size2=opt.hidden_disc2, 
-                                  minibatch_avarage=opt.minibatch_averaging)
+                                  minibatch_average=opt.minibatch_averaging)
     
     autoencoder = Autoencoder(input_size=train_dataset.data.shape[1], 
                               hidden_size=opt.hidden_gen, 
@@ -124,7 +124,7 @@ def main():
                 recons_samples = autoencoder(real_samples)
 
                 # Loss measures generator's ability to fool the discriminator
-                a_loss = autoencoder_loss(recons_samples, real_samples)
+                a_loss = autoencoder_loss(recons_samples, real_samples, binary=opt.binary)
 
                 # # Reset gradients (if you uncomment it, it would be a mess. Why?!!!!!!!!!!!!!!!)
                 optimizer_AE.zero_grad()
@@ -143,33 +143,37 @@ def main():
             epoch_start = time.time()
             for i, samples in enumerate(dataloader_train):
 
-                # Adversarial ground truths
-                valid = Variable(Tensor(samples.shape[0]).fill_(1.0), requires_grad=False)
-                fake = Variable(Tensor(samples.shape[0]).fill_(0.0), requires_grad=False)
-
                 # Configure input
                 real_samples = Variable(samples.type(Tensor))
 
                 # Sample noise as generator input
                 z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
 
+                # ---------------------
+                #  Train Discriminator
+                # ---------------------
+
+                # reset gradients of discriminator
+                optimizer_D.zero_grad()
+
+                for p in discriminator.parameters():  # reset requires_grad
+                    p.requires_grad = True
+
+                # Measure discriminator's ability to classify real from generated samples
+                # The detach() method constructs a new view on a tensor which is declared
+                # not to need gradients, i.e., it is to be excluded from further tracking of
+                # operations, and therefore the subgraph involving this view is not recorded.
+                # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
+
+                out_real = discriminator(real_samples).view(-1)
+                out_fake = discriminator(decoder(generator(z)).detach()).view(-1)
+                d_loss = discriminator_loss(out_real, out_fake)
+                d_loss.backward()
+                optimizer_D.step()
+
                 # -----------------
                 #  Train Generator
                 # -----------------
-
-                # We’re supposed to clear the gradients each iteration before calling loss.backward() and optimizer.step().
-                #
-                # In PyTorch, we need to set the gradients to zero before starting to do backpropragation because PyTorch
-                # accumulates the gradients on subsequent backward passes. This is convenient while training RNNs. So,
-                # the default action is to accumulate (i.e. sum) the gradients on every loss.backward() call.
-                #
-                # Because of this, when you start your training loop, ideally you should zero out the gradients so
-                # that you do the parameter update correctly. Else the gradient would point in some other direction
-                # than the intended direction towards the minimum (or maximum, in case of maximization objectives).
-
-                # Since the backward() function accumulates gradients, and you don’t want to mix up gradients between
-                # minibatches, you have to zero them out at the start of a new minibatch. This is exactly like how a general
-                # (additive) accumulator variable is initialized to 0 in code.
 
                 for p in discriminator.parameters():  # reset requires_grad
                     p.requires_grad = False
@@ -181,37 +185,10 @@ def main():
                 fake_samples = decoder(fake_samples)
 
                 # Loss measures generator's ability to fool the discriminator
-                g_loss = generator_loss(discriminator(fake_samples).view(-1), valid)
-
-                # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
+                g_loss = generator_loss(discriminator(fake_samples).view(-1))
                 optimizer_G.zero_grad()
                 g_loss.backward()
                 optimizer_G.step()
-
-                # ---------------------
-                #  Train Discriminator
-                # ---------------------
-
-                for p in discriminator.parameters():  # reset requires_grad
-                    p.requires_grad = True
-
-                # reset gradients of discriminator
-                optimizer_D.zero_grad()
-
-                # Measure discriminator's ability to classify real from generated samples
-                # The detach() method constructs a new view on a tensor which is declared
-                # not to need gradients, i.e., it is to be excluded from further tracking of
-                # operations, and therefore the subgraph involving this view is not recorded.
-                # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
-
-                out_real = discriminator(real_samples).view(-1)
-                out_fake = discriminator(fake_samples.detach()).view(-1)
-                d_loss = discriminator_loss(out_real, out_fake)
-                D_x = out_real.mean().item()
-                D_G_z = out_fake.mean().item()
-                d_loss.backward()
-
-                optimizer_D.step()
 
             with torch.no_grad():
 
@@ -220,49 +197,30 @@ def main():
                 real_samples_test = Variable(real_samples_test.type(Tensor))
                 z = torch.randn(real_samples_test.shape[0], opt.latent_dim, device=device)
 
-                valid_test = Variable(Tensor(real_samples_test.shape[0]).fill_(1.0), requires_grad=False)
-                fake_test = Variable(Tensor(real_samples_test.shape[0]).fill_(0.0), requires_grad=False)
-
                 # Generator
                 fake_samples_test = generator(z)
                 fake_samples_test = decoder(fake_samples_test)
-                g_loss_test = generator_loss(discriminator(fake_samples_test).view(-1), valid_test)
+                g_loss_test = generator_loss(discriminator(fake_samples_test).view(-1))
 
                 # Discriminator
                 out_real_test = discriminator(real_samples_test).view(-1)
-                real_loss_test = discriminator_loss(out_real_test, valid_test)
-                # D_x_test = out_real_test.mean().item()
-                accuracy_real_test = discriminator_accuracy(out_real_test, valid_test)
-
                 out_fake_test = discriminator(fake_samples_test.detach()).view(-1)
-                fake_loss_test = discriminator_loss(out_fake_test, fake_test)
-                #loss = -torch.mean(torch.log(outputs_real + 1e-12)) - torch.mean(torch.log(1. - outputs_fake + 1e-12))
-                # D_G_z_test = fake_loss_test.mean().item()
-                accuracy_fake_test = discriminator_accuracy(out_fake_test, fake_test)
+                d_loss_test = discriminator_loss(out_real_test, out_fake_test)
 
-                # Accumulated loss
-                d_loss_test = (real_loss_test + fake_loss_test) / 2
+                accuracy_real_test = discriminator_accuracy(predicted=out_real_test, y_true=True)
+                accuracy_fake_test = discriminator_accuracy(predicted=out_fake_test, y_true=False)
 
                 # Test autoencoder
                 reconst_samples_test = autoencoder(real_samples_test)
-                a_loss_test = autoencoder_loss(reconst_samples_test, real_samples_test)
+                a_loss_test = autoencoder_loss(reconst_samples_test, real_samples_test, binary=opt.binary)
 
-            print(
-                "TRAIN: [Epoch %d/%d] [Batch %d/%d] [D loss: %.2f] [G loss: %.2f] [A loss: %.2f]"
-                % (epoch + 1, opt.n_epochs, i, len(dataloader_train), d_loss.item(), g_loss.item(), a_loss.item())
-                , flush=True)
-
-            print(
-                "TEST: [Epoch %d/%d] [Batch %d/%d] [D loss: %.2f] [G loss: %.2f] [A loss: %.2f] [real accuracy: %.2f] [fake accuracy: %.2f]"
-                % (epoch + 1, opt.n_epochs, i, len(dataloader_train), d_loss_test.item(), g_loss_test.item(),
-                a_loss_test.item(), accuracy_real_test,
-                accuracy_fake_test)
-                , flush=True)
-
-            # End of epoch
-            epoch_end = time.time()
-            if opt.epoch_time_show:
-                print("It has been {0} seconds for this epoch".format(epoch_end - epoch_start), flush=True)
+                # every 10 epochs print loss and accuracy_real and accuracy_fake
+                if (epoch + 1) % 10 == 0:
+                    print(
+                        "[Epoch %d/%d] [D loss: %.3f] [G loss: %.3f] [A loss: %.3f] [Real acc: %.3f] [Fake acc: %.3f] "
+                        % (epoch + 1, opt.n_epochs, d_loss.item(), g_loss.item(), a_loss.item(), 
+                            accuracy_real_test, accuracy_fake_test)
+                        , flush=True)
 
 
 
