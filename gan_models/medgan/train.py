@@ -4,11 +4,14 @@ import torch.nn.functional as F
 import torch.optim as optim
 import argparse
 import os
-import torchvision.transforms as transforms
+import numpy as np
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 from subprocess import call
 import time
+import matplotlib.pyplot as plt
+import datetime
+import sys
 
 import wandb
 import warnings
@@ -44,6 +47,7 @@ parser.add_argument("--hidden_gen", type=int, default=128, help="dimensionality 
 parser.add_argument("--hidden_disc1", type=int, default=128, help="dimensionality of the first hidden layer of the discriminator")
 parser.add_argument("--hidden_disc2", type=int, default=256, help="dimensionality of the second hidden layer of the discriminator")
 parser.add_argument("--binary", type=bool, default=True, help="Binary or count data")
+parser.add_argument("--opt.generate_N", type=int, default=100, help="Number of samples to generate")
 
 parser.add_argument("--sample_interval", type=int, default=100, help="interval betwen image samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
@@ -55,15 +59,14 @@ parser.add_argument("--resume", type=bool, default=False, help="Training status"
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
-parser.add_argument("--PATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/medGan'),
+parser.add_argument("--PATH", type=str, default=os.path.expanduser('gan_models/medgan/model_save'),
                     help="Training status")
 parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
+parser.add_argument("--model_directory", type=str, default=None, help="Directory to saved model")
 
 
 opt = parser.parse_args()
-
-device = torch.device("cuda" if opt.cuda else "cpu")
 
 #### Train and test data loader ####
 train_dataset = CustomDataset(opt.DATASETPATH, train=True)
@@ -75,6 +78,13 @@ samplerRandom = torch.utils.data.sampler.RandomSampler(data_source=test_dataset,
 dataloader_test = DataLoader(test_dataset, batch_size=opt.batch_size, shuffle=False, sampler=samplerRandom)
 
 def main():
+
+    #sys.dont_write_bytecode = True # To avoid creating .pyc files
+
+    now = datetime.datetime.now() # To create a unique folder for each run
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")  # To create a unique folder for each run
+
+    device = torch.device("cuda" if opt.cuda else "cpu") # Set device
 
     # Initialize generator, discriminator, autoencoder and decoder
     
@@ -221,6 +231,115 @@ def main():
                         % (epoch + 1, opt.n_epochs, d_loss.item(), g_loss.item(), a_loss.item(), 
                             accuracy_real_test, accuracy_fake_test)
                         , flush=True)
+
+
+                # push metrics to wandb every epoch 
+                wandb.log({"epoch": epoch + 1, "d_loss": d_loss.item(), "g_loss": g_loss.item(), "a_loss": a_loss.item(),
+                            "accuracy_real": accuracy_real_test, "accuracy_fake": accuracy_fake_test })
+                
+                # save model to wandb
+                if epoch  ==  opt.n_epochs - 1:
+                    dirname = os.path.join(opt.PATH, timestamp)
+                    os.makedirs(dirname, exist_ok=True)
+                    torch.save(generator.state_dict(), os.path.join(dirname, "generator.pth"))
+                    torch.save(autoencoder.decoder.state_dict(), os.path.join(dirname, "decoder.pth"))
+                    torch.save(autoencoder.state_dict(), os.path.join(dirname, "autoencoder.pth"))
+                    torch.save(discriminator.state_dict(), os.path.join(dirname, "discriminator.pth"))
+                    
+    if opt.generate:
+
+        assert opt.training == False, "You can't generate data if you are training the model"
+
+        # Check cuda
+        if torch.cuda.is_available() and not opt.cuda:
+            print("WARNING: You have a CUDA device BUT it is not in use...")
+
+        # Activate CUDA
+        device = torch.device("cuda:0" if opt.cuda else "cpu")
+
+        #####################################
+        #### Load model and optimizer #######
+        #####################################
+
+        # random seed
+        np.random.seed(1234)
+
+        # Initialize generator and discriminator
+        generator = Generator(z_dim = opt.latent_dim, 
+                            hidden_size = opt.hidden_gen)
+        
+        discriminator = Discriminator(input_size=train_dataset.data.shape[1], 
+                                    hidden_size1=opt.hidden_disc1, 
+                                    hidden_size2=opt.hidden_disc2, 
+                                    minibatch_average=opt.minibatch_averaging)
+        
+        autoencoder = Autoencoder(input_size=train_dataset.data.shape[1], 
+                                hidden_size=opt.hidden_gen, 
+                                binary=opt.binary)
+
+        # Loading the checkpoint
+        assert os.path.exists(opt.model_directory), "The model directory does not exist"
+        model_dir = opt.model_directory
+        checkpoint_generator = torch.load(os.path.join(model_dir, "generator.pth"))
+        checkpoint_autoencoder = torch.load(os.path.join(model_dir, "autoencoder.pth"))
+        checkpoint_autoencoder_decoder = torch.load(os.path.join(model_dir, "decoder.pth"))
+        checkpoint_discriminator = torch.load(os.path.join(model_dir, "discriminator.pth"))
+
+        # Load models
+        generator.load_state_dict(checkpoint_generator)
+        autoencoder.load_state_dict(checkpoint_autoencoder)
+        autoencoder.decoder.load_state_dict(checkpoint_autoencoder_decoder)
+        discriminator.load_state_dict(checkpoint_discriminator)
+
+        # insert weights [required]
+        generator.to(device)
+        autoencoder.to(device)
+        discriminator.to(device)
+        decoder = autoencoder.decoder
+
+        #######################################################
+        #### Load real data and generate synthetic data #######
+        #######################################################
+
+        # Load real data
+        real_samples = dataloader_train.dataset.data
+
+        # Generate a batch of samples
+        z = torch.randn(opt.generate_N, opt.latent_dim, device=device)
+        gen_samples_tensor = generator(z)
+        gen_samples_decoded = decoder(gen_samples_tensor)
+        gen_samples = gen_samples_decoded.detach().cpu().numpy()
+
+        gen_samples[gen_samples >= 0.5] = 1.0
+        gen_samples[gen_samples < 0.5] = 0.0
+
+        # Trasnform Object array to float
+        gen_samples = gen_samples.astype(np.float32)
+
+        # ave synthetic data
+        np.save(os.path.join(opt.PATH, "synthetic.npy"), gen_samples, allow_pickle=False)
+
+    if opt.evaluate:
+        # Load synthetic data
+        gen_samples = np.load(os.path.join(opt.PATH, "synthetic.npy"), allow_pickle=False)
+
+        # Load real data
+        real_samples = train_dataset.return_data()[0:gen_samples.shape[0], :]
+
+        # Dimenstion wise probability
+        prob_real = np.mean(real_samples, axis=0)
+        prob_syn = np.mean(gen_samples, axis=0)
+
+        p1 = plt.scatter(prob_real, prob_syn, c="b", alpha=0.5, label="medGAN")
+        x_max = max(np.max(prob_real), np.max(prob_syn))
+        x = np.linspace(0, x_max + 0.1, 1000)
+        p2 = plt.plot(x, x, linestyle='-', color='k', label="Ideal")  # solid
+        plt.tick_params(labelsize=12)
+        plt.legend(loc=2, prop={'size': 15})
+        # plt.title('Scatter plot p')
+        # plt.xlabel('x')
+        # plt.ylabel('y')
+        plt.show()
 
 
 

@@ -1,6 +1,8 @@
 
 .pyc
 .log
+.pth 
+wandb
 # result & data folders
 */results
 *$results

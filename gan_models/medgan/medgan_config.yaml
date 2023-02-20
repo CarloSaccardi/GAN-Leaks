@@ -1,0 +1,4 @@
+wandb: firstRun
+training: False
+generate: True
+model_directory: gan_models\medgan\model_save\2023-02-20_10-46-07
