@@ -33,14 +33,8 @@ parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate
 parser.add_argument("--weight_decay", type=float, default=0.0001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
-parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
 
-parser.add_argument("--cuda", type=bool, default=False,
-                    help="CUDA activation")
-parser.add_argument("--multiplegpu", type=bool, default=False,
-                    help="number of cpu threads to use during batch generation")
-parser.add_argument("--num_gpu", type=int, default=0, help="Number of GPUs in case of multiple GPU")
-
+parser.add_argument("--cuda", type=bool, default=False, help="CUDA activation")
 
 parser.add_argument("--latent_dim", type=int, default=128, help="dimensionality of the latent space")
 parser.add_argument("--hidden_gen", type=int, default=128, help="dimensionality of the hidden layer of the generator")
@@ -124,6 +118,9 @@ def main():
     Tensor = torch.cuda.FloatTensor if opt.cuda else torch.FloatTensor
 
     if opt.training:
+
+        assert opt.generate == False, "You can not generate data while training"
+
         for epoch_pre in range(opt.n_epochs_pretrain):
             for i, samples in enumerate(dataloader_train):
 
@@ -340,8 +337,6 @@ def main():
         # plt.xlabel('x')
         # plt.ylabel('y')
         plt.show()
-
-
 
 
 def update_args(args, config_dict):

@@ -1,4 +1,5 @@
 wandb: firstRun
-training: False
-generate: True
-model_directory: gan_models\medgan\model_save\2023-02-20_10-46-07
+training: True
+generate: False
+DATASETPATH: data\mini_MIMIC_III\mini_MIMIC_III.csv
+#model_directory: gan_models\medgan\model_save\2023-02-20_10-46-07

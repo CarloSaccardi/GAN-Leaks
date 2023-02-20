@@ -13,6 +13,7 @@ import os
 import wandb
 import warnings
 import yaml
+import datetime
 
 from model_torch import Generator, Discriminator
 from utils import gradient_penalty
@@ -30,6 +31,7 @@ parser.add_argument('--lambda_gp', type=float, default=10, help='lambda for grad
 parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
+parser.add_argument("--PATH", type=str, default=os.path.expanduser('gan_models/pggan/model_save'), help="Training status")
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -43,7 +45,7 @@ FIXED_NOISE = torch.randn(8, args.nz, 1, 1).to(device)
 
 def get_loader(imge_size):
     transform = transforms.Compose([
-        transforms.Resize(imge_size),
+        transforms.Resize((imge_size,imge_size)),
         transforms.ToTensor(),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.Normalize([0.5]*args.nc, [0.5]*args.nc)
@@ -59,12 +61,12 @@ def get_loader(imge_size):
 def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scaler_gen, loader):
     
     loop = tqdm(loader, leave=True)
-    for batch_idx, (real, _) in enumerate(loop):
+    for _, (real, _) in enumerate(loop):
         
         real = real.to(device)
         cur_batch_size = real.shape[0]
          
-        #train critic--> max ( E[critic(real)] - E[critic(fake)] )
+        #train critic--> max ( E[critic(real)] - E[critic(fake)] ) --> min ( - E[critic(real)] + E[critic(fake)] )
         noise = torch.randn(cur_batch_size, args.nz, 1, 1).to(device)
         
         with torch.cuda.amp.autocast():
@@ -84,7 +86,7 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
         scaler_critic.step(opt_critic)
         scaler_critic.update()
          
-        #train generator--> max E[critic(gen_fake)]
+        #train generator--> max E[critic(gen_fake)] --> min -E[critic(gen_fake)]
         with torch.cuda.amp.autocast():
             gen_fake = critic(fake, step, alpha)
             loss_gen = -torch.mean(gen_fake)
@@ -101,6 +103,10 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
         
 
 def main():
+
+    now = datetime.datetime.now() # To create a unique folder for each run
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")  # To create a unique folder for each run
+
     print(args)
     gen = Generator(args.nz, args.in_channels, args.nc).to(device)
     critic = Discriminator(args.in_channels, args.nc).to(device)
@@ -119,38 +125,41 @@ def main():
     
     for num_epochs in PROGRESSIVE_EPOCHS[step:]:
         alpha = 1e-5 #increase to 1 over the course of the epoch
-        loader, dataset = get_loader(4*2**step)
+        loader, _ = get_loader(4*2**step)
         print(f"image resolution: {4*2**step}x{4*2**step}")
-        
-        loss_CRITIC, loss_GEN, alpha = train_fn(critic, 
-                                                gen, 
-                                                step, 
-                                                alpha, 
-                                                opt_critic, 
-                                                opt_gen, 
-                                                scaler_critic, 
-                                                scaler_gen, 
-                                                loader)
-        
-        #print the losses for every epoch
-        print(f"loss_critic: {loss_CRITIC}, loss_gen: {loss_GEN}")
 
-        #wandb logging and save the model
-        if args.wandb:
-            wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
-            #torch.save(gen.state_dict(), os.path.join(wandb.run.dir, f"gen_{step}.pth"))
-            #torch.save(critic.state_dict(), os.path.join(wandb.run.dir, f"critic_{step}.pth"))
+        for epoch in range(num_epochs):
 
-            #visualize progress after every epoch in wandb
-            with torch.no_grad():
-                fake = gen(FIXED_NOISE, step, alpha)
-                grid = torchvision.utils.make_grid(fake)
-                wandb.log({"progress": [wandb.Image(grid, caption=f"step: {step}, alpha: {alpha}")]})
+            loss_CRITIC, loss_GEN, alpha = train_fn(critic, 
+                                                    gen, 
+                                                    step, 
+                                                    alpha, 
+                                                    opt_critic, 
+                                                    opt_gen, 
+                                                    scaler_critic, 
+                                                    scaler_gen, 
+                                                    loader)
+            
+            #print the losses for every epoch
+            print(f"epoch: {epoch}, loss_critic: {loss_CRITIC}, loss_gen: {loss_GEN}")
+
+            #wandb logging and save the model
+            if args.wandb:
+                wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
+
+                #visualize progress after every epoch in wandb
+                with torch.no_grad():
+                    fake = gen(FIXED_NOISE, step, alpha)
+                    grid = torchvision.utils.make_grid(fake)
+                    wandb.log({"progress": [wandb.Image(grid, caption=f"step: {step}, alpha: {alpha}")]})
+
+            if step == len(PROGRESSIVE_EPOCHS) - 1 and epoch == num_epochs - 1:
+                dirname = os.path.join(args.PATH, timestamp)
+                torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
+                torch.save(critic.state_dict(), os.path.join(dirname, "critic.pth"))
+                print("saved model")
         
-    step += 1
-        
-
-
+        step += 1
 
 
 def update_args(args, config_dict):

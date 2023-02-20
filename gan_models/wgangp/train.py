@@ -15,6 +15,7 @@ import numpy as np
 import wandb
 import yaml
 import warnings
+import datetime
 
 from model import Generator, Discriminator, initialize_weights
 from utils import grandient_penalty
@@ -38,6 +39,7 @@ parser.add_argument('--dataroot', type=str, default=1, help='path to dataset')
 parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
+parser.add_argument("--PATH", type=str, default=os.path.expanduser('gan_models/wgangp/model_save'), help="Training status")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -45,19 +47,19 @@ args = parser.parse_args()
 
 
 transform = transforms.Compose([
-                transforms.Resize(args.image_size),
+                transforms.Resize((args.image_size, args.image_size)),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5]*args.nc, [0.5]*args.nc),
                     ]) 
-
-if args.data_name == 'miniCelebA':
-    transform =  transforms.Compose([ transforms.Resize((args.image_size, args.image_size)), transform ])#miniCelebA is not cropped --> (71x64)
 
 dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
 
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
 def main():
+
+    now = datetime.datetime.now() # To create a unique folder for each run
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")  # To create a unique folder for each run
     
     gen = Generator(args.nz, args.nc, args.ngf).to(device)
     critic = Discriminator(args.nc, args.ndf).to(device)
@@ -106,6 +108,12 @@ def main():
                     fake = gen(noise).detach().cpu()
                     grid = torchvision.utils.make_grid(fake)
                     wandb.log({"generated_images": [wandb.Image(grid, caption="Epoch {}".format(epoch))]})
+
+        if epoch == args.num_epochs - 1:
+            dirname = os.path.join(args.PATH, timestamp)
+            torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
+            torch.save(critic.state_dict(), os.path.join(dirname, "critic.pth"))
+            print("saved model")
 
 
 def update_args(args, config_dict):
