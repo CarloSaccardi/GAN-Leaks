@@ -165,8 +165,9 @@ def main():
 
                     #visualize progress after every epoch in wandb
                     with torch.no_grad():
-                        fake = gen(FIXED_NOISE, step, alpha)
-                        grid = torchvision.utils.make_grid(fake)
+                        noise = torch.randn(1, args.nz, 1, 1, device=device)
+                        fake = gen(noise, step, alpha)
+                        grid = torchvision.utils.make_grid(fake, normalize=True)
                         wandb.log({"progress": [wandb.Image(grid, caption=f"step: {step}, alpha: {alpha}")]})
             
             step += 1

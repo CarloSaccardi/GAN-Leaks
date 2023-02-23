@@ -119,9 +119,9 @@ def main():
                     if args.wandb:
                         wandb.log({"Loss_D": loss_critic.item(), "Loss_G": loss_gen.item()})
                         # visualize progress in wandb
-                        noise = torch.randn(64, args.nz, 1, 1, device=device)
+                        noise = torch.randn(1, args.nz, 1, 1, device=device)
                         fake = gen(noise).detach().cpu()
-                        grid = torchvision.utils.make_grid(fake)
+                        grid = torchvision.utils.make_grid(fake, normalize=True)
                         wandb.log({"generated_images": [wandb.Image(grid, caption="Epoch {}".format(epoch))]})
 
         if args.save_model:
