@@ -3,6 +3,7 @@
 .log
 .pth 
 wandb
+.npz
 # result & data folders
 */results
 *$results
@@ -10,6 +11,15 @@ results*
 */datasets
 *$datasets
 datasets*
+*/data
+*$data
+data*
+*/model_save
+*$model_save
+model_save*
+*/syn_data
+*$syn_data
+syn_data*
 
 # Pycharm
 .idea/

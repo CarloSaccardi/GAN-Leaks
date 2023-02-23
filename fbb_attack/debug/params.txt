@@ -1,0 +1,7 @@
+exp_name:debug
+syn_data_path:syn_data\dcgan\_2023_02_23__16_01_29\dcgan_synthetic_data.npz
+noise_dir:syn_data\dcgan\npz_noise\_2023_02_23__17_42_10\dcgan_noise.npz
+pos_data_dir:C:\Users\esaccar\OneDrive - Ericsson\Desktop\THESIS\GAN-Leaks\data\miniCelebA\train
+neg_data_dir:C:\Users\esaccar\OneDrive - Ericsson\Desktop\THESIS\GAN-Leaks\data\miniCelebA\test
+data_num:20000
+resolution:64

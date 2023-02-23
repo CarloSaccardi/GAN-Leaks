@@ -1,12 +1,9 @@
 import numpy as np
 import os
-import sys
 import pickle
 import argparse
 from tqdm import tqdm
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tools'))
-from utils import *
+from tools.utils import *
 from sklearn.neighbors import NearestNeighbors
 
 ### Hyperparameters
@@ -19,13 +16,15 @@ BATCH_SIZE = 10
 #############################################################################################################
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_name', '-name', type=str, required=True,
+    parser.add_argument('--exp_name', '-name', type=str, default='debug',
                         help='the name of the current experiment (used to set up the save_dir)')
-    parser.add_argument('--gan_model_dir', '-gdir', type=str, required=True,
-                        help='directory for the Victim GAN model (save the generated.npz file)')
-    parser.add_argument('--pos_data_dir', '-posdir', type=str,
+    parser.add_argument('--syn_data_path', type=str, default='syn_data\dcgan\_2023_02_23__16_01_29\dcgan_synthetic_data.npz',
+                        help='directory to the synthetic data')
+    parser.add_argument('--noise_dir', type=str, default='syn_data\dcgan\\npz_noise\_2023_02_23__17_42_10\dcgan_noise.npz',
+                        help='the directory for the noise')
+    parser.add_argument('--pos_data_dir', type=str, default=os.path.join(os.getcwd(), 'data', 'miniCelebA', 'train'),
                         help='the directory for the positive (training) query images set')
-    parser.add_argument('--neg_data_dir', '-negdir', type=str,
+    parser.add_argument('--neg_data_dir', type=str, default=os.path.join(os.getcwd(), 'data', 'miniCelebA', 'test'),
                         help='the directory for the negative (testing) query images set')
     parser.add_argument('--data_num', '-dnum', type=int, default=20000,
                         help='the number of query images to be considered')
@@ -41,10 +40,11 @@ def check_args(args):
     :return:
     '''
     ## load dir
-    assert os.path.exists(args.gan_model_dir)
+    assert os.path.exists(args.syn_data_path) 
+    assert os.path.exists(args.noise_dir)
 
     ## set up save_dir
-    save_dir = os.path.join(os.path.dirname(__file__), 'results/fbb', args.exp_name)
+    save_dir = os.path.join(os.getcwd(), 'fbb_attack', args.exp_name)
     check_folder(save_dir)
 
     ## store the parameters
@@ -53,7 +53,7 @@ def check_args(args):
             f.writelines(k + ":" + str(v) + "\n")
             print(k + ":" + str(v))
     pickle.dump(vars(args), open(os.path.join(save_dir, 'params.pkl'), 'wb'), protocol=2)
-    return args, save_dir, args.gan_model_dir
+    return args, save_dir, args.syn_data_path, args.noise_dir
 
 
 #############################################################################################################
@@ -103,13 +103,14 @@ def find_pred_z(gen_z, idx):
 # main
 #############################################################################################################
 def main():
-    args, save_dir, load_dir = check_args(parse_arguments())
+    args, save_dir, load_dir_images, load_dir_noise = check_args(parse_arguments())
     resolution = args.resolution
 
     ### load generated samples
-    generate = np.load(os.path.join(load_dir, 'generated.npz'))
-    gen_imgs = generate['img_r01']
-    gen_z = generate['noise']
+    generate = np.load(load_dir_images)
+    noise = np.load(load_dir_noise)
+    gen_imgs = generate['fake']
+    gen_z = noise['noise']
     gen_feature = np.reshape(gen_imgs, [len(gen_imgs), -1])
     gen_feature = 2. * gen_feature - 1.
 

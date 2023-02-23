@@ -54,10 +54,11 @@ parser.add_argument("--finetuning", type=bool, default=False, help="Training sta
 parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 parser.add_argument("--PATH", type=str, default=os.path.expanduser('gan_models/medgan/model_save'),
-                    help="Training status")
+                    help="Path to save the model")
 parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument("--model_directory", type=str, default=None, help="Directory to saved model")
+parser.add_argument("--save_model", type=bool, default=True, help="Save model or not")
 
 
 opt = parser.parse_args()
@@ -73,7 +74,7 @@ dataloader_test = DataLoader(test_dataset, batch_size=opt.batch_size, shuffle=Fa
 
 def main():
 
-    #sys.dont_write_bytecode = True # To avoid creating .pyc files
+    #TODO: add seed for reproducibility and initialization of weights
 
     now = datetime.datetime.now() # To create a unique folder for each run
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")  # To create a unique folder for each run
@@ -235,7 +236,7 @@ def main():
                             "accuracy_real": accuracy_real_test, "accuracy_fake": accuracy_fake_test })
                 
                 # save model to wandb
-                if epoch  ==  opt.n_epochs - 1:
+                if epoch  ==  opt.n_epochs - 1 and opt.save_model:
                     dirname = os.path.join(opt.PATH, timestamp)
                     os.makedirs(dirname, exist_ok=True)
                     torch.save(generator.state_dict(), os.path.join(dirname, "generator.pth"))

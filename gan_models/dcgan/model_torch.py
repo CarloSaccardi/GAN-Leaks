@@ -23,16 +23,16 @@ def gen_random(mode, size):
     
     
 class Discriminator(nn.Module):
-    def __init__(self, input_size, hidden_size):
+    def __init__(self, channel_img, feature_d):
         super(Discriminator, self).__init__()
         self.disc = nn.Sequential(
             # input is N x (nc) x 64 x 64
-            nn.Conv2d(input_size, hidden_size, kernel_size = 4, stride = 2, padding = 1, bias=False), # 32x32
-            nn.LeakyReLU(0.2, inplace=True),
-            self._block(hidden_size, hidden_size * 2, 4, 2, 1),# 16x16
-            self._block(hidden_size * 2, hidden_size * 4, 4, 2, 1),# 8x8
-            self._block(hidden_size * 4, hidden_size * 8, 4, 2, 1),# 4x4
-            nn.Conv2d(hidden_size * 8, 1, kernel_size = 4, stride = 2, padding = 0, bias=False), # 1x1
+            nn.Conv2d(channel_img, feature_d, kernel_size = 4, stride = 2, padding = 1), # 32x32
+            nn.LeakyReLU(0.2),
+            self._block(feature_d, feature_d * 2, 4, 2, 1),# 16x16
+            self._block(feature_d * 2, feature_d * 4, 4, 2, 1),# 8x8
+            self._block(feature_d * 4, feature_d * 8, 4, 2, 1),# 4x4
+            nn.Conv2d(feature_d * 8, 1, kernel_size = 4, stride = 2, padding = 0), # 1x1
             nn.Sigmoid()
         )
 
@@ -40,7 +40,7 @@ class Discriminator(nn.Module):
         return nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.2),
         )
         
     def forward(self, x):
@@ -65,7 +65,7 @@ class Generator(nn.Module):
         return nn.Sequential(
             nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
         )
         
     def forward(self, x):

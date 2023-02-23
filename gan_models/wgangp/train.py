@@ -39,7 +39,18 @@ parser.add_argument('--dataroot', type=str, default=1, help='path to dataset')
 parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
-parser.add_argument("--PATH", type=str, default=os.path.expanduser('gan_models/wgangp/model_save'), help="Training status")
+
+parser.add_argument("--PATH", type=str, default=os.path.join(os.getcwd(),'model_save', 'wgangp'), help="Directory to save model")
+parser.add_argument("--PATH_syn_data", type=str, default=os.path.join(os.getcwd(), 'syn_data', 'wgangp'), help="Directory to save synthetic data")
+
+parser.add_argument("--save_model", type=bool, default=True, help="Save model or not")
+parser.add_argument("--saved_model_name", type=str, default=None, help="Saved model name")
+
+parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--resume", type=bool, default=False, help="Training status")
+parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -58,8 +69,10 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, sh
 
 def main():
 
+    print(args)
+
     now = datetime.datetime.now() # To create a unique folder for each run
-    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")  # To create a unique folder for each run
+    timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
     
     gen = Generator(args.nz, args.nc, args.ngf).to(device)
     critic = Discriminator(args.nc, args.ndf).to(device)
@@ -72,48 +85,69 @@ def main():
     gen.train()
     critic.train()
 
-    for epoch in range(args.num_epochs):
-        for i, data in enumerate(dataloader, 0):
-            # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
-            real = data[0].to(device)
+    if args.training:
 
-            for _ in range(args.critic_iter):
-                curr_batch = real.size(0)
-                noise = torch.randn(curr_batch, args.nz, 1, 1, device=device)
-                fake = gen(noise)
-                gp = grandient_penalty(critic, real, fake, device=device)
-                critic_fake = critic(fake).reshape(-1)
-                critic_real = critic(real).reshape(-1)
-                loss_critic = critic_fake.mean() - critic_real.mean() + args.lambda_gp * gp
-                critic.zero_grad()
-                loss_critic.backward(retain_graph=True)
-                opt_critic.step()
+        for epoch in range(args.num_epochs):
+            for i, data in enumerate(dataloader, 0):
+                # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
+                real = data[0].to(device)
 
-            # train generator --> min -E[critic(gen_fake)]
-            output = critic(fake).reshape(-1)
-            loss_gen = -output.mean()
-            gen.zero_grad()
-            loss_gen.backward()
-            opt_gen.step()
+                for _ in range(args.critic_iter):
+                    curr_batch = real.size(0)
+                    noise = torch.randn(curr_batch, args.nz, 1, 1, device=device)
+                    fake = gen(noise)
+                    gp = grandient_penalty(critic, real, fake, device=device)
+                    critic_fake = critic(fake).reshape(-1)
+                    critic_real = critic(real).reshape(-1)
+                    loss_critic = critic_fake.mean() - critic_real.mean() + args.lambda_gp * gp
+                    critic.zero_grad()
+                    loss_critic.backward(retain_graph=True)
+                    opt_critic.step()
 
-            # print statistics and log to wandb
-            if i % 50 == 0:
-                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
-                      % (epoch, args.num_epochs, i, len(dataloader),
-                         loss_critic.item(), loss_gen.item()))
-                if args.wandb:
-                    wandb.log({"Loss_D": loss_critic.item(), "Loss_G": loss_gen.item()})
-                    # visualize progress in wandb
-                    noise = torch.randn(64, args.nz, 1, 1, device=device)
-                    fake = gen(noise).detach().cpu()
-                    grid = torchvision.utils.make_grid(fake)
-                    wandb.log({"generated_images": [wandb.Image(grid, caption="Epoch {}".format(epoch))]})
+                # train generator --> min -E[critic(gen_fake)]
+                output = critic(fake).reshape(-1)
+                loss_gen = -output.mean()
+                gen.zero_grad()
+                loss_gen.backward()
+                opt_gen.step()
 
-        if epoch == args.num_epochs - 1:
+                # print statistics and log to wandb
+                if i % 50 == 0:
+                    print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
+                        % (epoch, args.num_epochs, i, len(dataloader),
+                            loss_critic.item(), loss_gen.item()))
+                    if args.wandb:
+                        wandb.log({"Loss_D": loss_critic.item(), "Loss_G": loss_gen.item()})
+                        # visualize progress in wandb
+                        noise = torch.randn(64, args.nz, 1, 1, device=device)
+                        fake = gen(noise).detach().cpu()
+                        grid = torchvision.utils.make_grid(fake)
+                        wandb.log({"generated_images": [wandb.Image(grid, caption="Epoch {}".format(epoch))]})
+
+        if args.save_model:
             dirname = os.path.join(args.PATH, timestamp)
+            os.makedirs(dirname, exist_ok=True)
             torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
             torch.save(critic.state_dict(), os.path.join(dirname, "critic.pth"))
             print("saved model")
+
+    if args.generate:
+        #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
+
+        if args.training:
+            gen.load_state_dict(torch.load(os.path.join(dirname, "generator.pth")))
+        else:
+            assert args.saved_model_name is not None, "Please specify the saved model name"
+            gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
+        
+        gen.eval()
+
+        with torch.no_grad():
+            noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+            fake = gen(noise).detach().cpu()
+            dirname = os.path.join(args.PATH_syn_data , timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            np.savez(os.path.join(dirname, "wgangp_synthetic_data.npz"), fake=fake)
 
 
 def update_args(args, config_dict):

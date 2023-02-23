@@ -19,9 +19,8 @@ import torchvision
 
 from model_torch import Generator, Discriminator, initialize_weights
 
-
 parser = argparse.ArgumentParser()
-parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
+parser.add_argument('--lr', type=float, default=2e-4, help='learning rate, default=0.0002')
 parser.add_argument('--batch_size', type=int, default=128, help='batch size, default=128')
 parser.add_argument('--image_size', type=int, default=64, help='the height / width of the input image to network, default=64')
 parser.add_argument('--nc', type=int, default=3, help='number of color channels in the input image, default=3')
@@ -36,7 +35,18 @@ parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for adam. 
 parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument('--local_config', default=None, help='path to config file')
-parser.add_argument("--PATH", type=str, default=os.path.expanduser('gan_models/dcgan/model_save'), help="Training status")
+
+parser.add_argument("--PATH", type=str, default=os.path.join(os.getcwd(),'model_save', 'dcgan'), help="Directory to save model")
+parser.add_argument("--PATH_syn_data", type=str, default=os.path.join(os.getcwd(), 'syn_data', 'dcgan'), help="Directory to save synthetic data")
+
+parser.add_argument("--save_model", type=bool, default=True, help="Save model or not")
+parser.add_argument("--saved_model_name", type=str, default=None, help="Saved model name")
+
+parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--resume", type=bool, default=False, help="Training status")
+parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -55,9 +65,11 @@ dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
 def main():
-
+    #TODO: add seed for reproducibility and initialization of weights
+    print(args)
+    
     now = datetime.datetime.now() # To create a unique folder for each run
-    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")  # To create a unique folder for each run
+    timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
     
     gen = Generator(args.nz, args.nc, args.ngf).to(device)
     disc = Discriminator(args.nc, args.ndf).to(device)
@@ -71,54 +83,92 @@ def main():
     gen.train()
     disc.train()
 
-    for epoch in range(args.num_epochs):
-        for batch_idx, (real, _) in enumerate(dataloader):
+    if args.training:
+
+        for epoch in range(args.num_epochs):
+            for batch_idx, (real, _) in enumerate(dataloader):
+                
+                real = real.to(device)
+                noise = torch.randn(args.batch_size, args.nz, 1, 1).to(device)
+                fake = gen(noise)
+
+                # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
+                disc_real = disc(real).reshape(-1)
+                lossD_real = criterion(disc_real, torch.ones_like(disc_real))
+                disc_fake = disc(fake.detach()).reshape(-1)
+                lossD_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
+                lossD = (lossD_real + lossD_fake) / 2
+                disc.zero_grad()
+                lossD.backward()
+                opt_disc.step()
+
+                # train generator --> min log(1-D(G(z))) <-> max log(D(G(z)))
+                output = disc(fake).reshape(-1)
+                lossG = criterion(output, torch.ones_like(output))
+                gen.zero_grad()
+                lossG.backward()
+                opt_gen.step()
+
+                if batch_idx % 50 == 0:
+                    print(
+                        f"Epoch [{epoch}/{args.num_epochs}] Batch {batch_idx}/{len(dataloader)} \
+                            Loss D: {lossD:.4f}, loss G: {lossG:.4f}"
+                    )
             
-            real = real.to(device)
-            noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
-            fake = gen(noise)
+            if args.wandb:
+                
+                #log metrics to wandb
+                wandb.log({"epoch": epoch, "loss_disc": lossD.item(), "loss_gen": lossG.item()})
 
-            # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
-            disc_real = disc(real).reshape(-1)
-            lossD_real = criterion(disc_real, torch.ones_like(disc_real))
-            disc_fake = disc(fake.detach()).reshape(-1)
-            lossD_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
-            lossD = (lossD_real + lossD_fake) / 2
-            disc.zero_grad()
-            lossD.backward()
-            opt_disc.step()
-
-            # train generator --> min log(1-D(G(z))) <-> max log(D(G(z)))
-            output = disc(fake).reshape(-1)
-            lossG = criterion(output, torch.ones_like(output))
-            gen.zero_grad()
-            lossG.backward()
-            opt_gen.step()
-
-            if batch_idx % 50 == 0:
-                print(
-                    f"Epoch [{epoch}/{args.num_epochs}] Batch {batch_idx}/{len(dataloader)} \
-                          Loss D: {lossD:.4f}, loss G: {lossG:.4f}"
-                )
+                #visualize progress after each epoch in wandb
+                with torch.no_grad():
+                    noise = torch.randn(1, args.nz, 1, 1, device=device)
+                    fake = gen(noise).detach().cpu()#shape (1, 3, 64, 64)
+                    
+                    grid = torchvision.utils.make_grid(fake[0], normalize=True)
+                    wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
         
-        if args.wandb:
-            
-            #log metrics to wandb
-            wandb.log({"epoch": epoch, "loss_disc": lossD.item(), "loss_gen": lossG.item()})
 
-            #visualize progress after each epoch in wandb
-            with torch.no_grad():
-                noise = torch.randn(64, args.nz, 1, 1, device=device)
-                fake = gen(noise).detach().cpu()
-                grid = torchvision.utils.make_grid(fake)
-                wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
-       
-
-        #save model parameters
-        if epoch == args.num_epochs - 1:
+            #save model parameters
+        if args.save_model:
             dirname = os.path.join(args.PATH, timestamp)
+            os.makedirs(dirname, exist_ok=True)
             torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
             torch.save(disc.state_dict(), os.path.join(dirname, "discriminator.pth"))
+
+    if args.generate:
+        #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
+
+        if args.training:
+            gen.load_state_dict(torch.load(os.path.join(dirname, "generator.pth")))
+        else:
+            assert args.saved_model_name is not None, "Please specify the saved model name"
+            gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
+        
+        gen.eval()
+
+        with torch.no_grad():
+            noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+            fake = gen(noise).detach().cpu()
+            #normalize the data to [0, 1]
+            fake = (fake + 1) / 2
+            
+
+            dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            np.savez(os.path.join(dirname, "dcgan_synthetic_data.npz"), fake=fake)
+
+            dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            np.savez(os.path.join(dirname, "dcgan_noise.npz"), noise=noise)
+
+            dirname = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            for i in range(args.batch_size):
+                torchvision.utils.save_image(fake[i], os.path.join(dirname, f"image_{i}.png"))
+
+
+
   
     
     
@@ -141,14 +191,3 @@ if __name__ == '__main__':
         warnings.warn("No config file was provided. Using default parameters.")
 
     main()
-   
-   
-        
-
-
-                          
-
-
-
-
-
