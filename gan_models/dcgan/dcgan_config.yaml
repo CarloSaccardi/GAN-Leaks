@@ -1,1 +1,2 @@
-wandb: firstRun
+training: False
+saved_model_name: model_save\dcgan\_2023_02_24__13_11_00

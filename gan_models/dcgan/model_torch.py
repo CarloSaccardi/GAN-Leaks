@@ -89,6 +89,4 @@ if __name__ == '__main__':
     gen = Generator(z_dim, in_channels, 8)
     initialize_weights(gen)
     z = torch.randn((N, z_dim, 1, 1))
-    print(gen(z).shape)          
-            
-        
+    print(gen(z).shape)  
