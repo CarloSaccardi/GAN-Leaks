@@ -74,18 +74,19 @@ def main():
     now = datetime.datetime.now() # To create a unique folder for each run
     timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
     
-    gen = Generator(args.nz, args.nc, args.ngf).to(device)
-    critic = Discriminator(args.nc, args.ndf).to(device)
-    initialize_weights(gen)
-    initialize_weights(critic)
-
-    opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas= (args.beta1, args.beta2))
-    opt_critic = optim.Adam(critic.parameters(), lr=args.lr, betas= (args.beta1, args.beta2))
-
-    gen.train()
-    critic.train()
 
     if args.training:
+
+        gen = Generator(args.nz, args.nc, args.ngf).to(device)
+        critic = Discriminator(args.nc, args.ndf).to(device)
+        initialize_weights(gen)
+        initialize_weights(critic)
+
+        opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas= (args.beta1, args.beta2))
+        opt_critic = optim.Adam(critic.parameters(), lr=args.lr, betas= (args.beta1, args.beta2))
+
+        gen.train()
+        critic.train()
 
         for epoch in range(args.num_epochs):
             for i, data in enumerate(dataloader, 0):
@@ -116,13 +117,15 @@ def main():
                     print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f'
                         % (epoch, args.num_epochs, i, len(dataloader),
                             loss_critic.item(), loss_gen.item()))
+                    
                     if args.wandb:
-                        wandb.log({"Loss_D": loss_critic.item(), "Loss_G": loss_gen.item()})
-                        # visualize progress in wandb
-                        noise = torch.randn(1, args.nz, 1, 1, device=device)
-                        fake = gen(noise).detach().cpu()
-                        grid = torchvision.utils.make_grid(fake, normalize=True)
-                        wandb.log({"generated_images": [wandb.Image(grid, caption="Epoch {}".format(epoch))]})
+                        with torch.no_grad():
+                            wandb.log({"Loss_D": loss_critic.item(), "Loss_G": loss_gen.item()})
+                            # visualize progress in wandb
+                            noise = torch.randn(1, args.nz, 1, 1, device=device)
+                            fake = gen(noise).detach().cpu()
+                            grid = torchvision.utils.make_grid(fake, normalize=True)
+                            wandb.log({"generated_images": [wandb.Image(grid, caption="Epoch {}".format(epoch))]})
 
         if args.save_model:
             dirname = os.path.join(args.PATH, timestamp)
@@ -134,20 +137,39 @@ def main():
     if args.generate:
         #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
 
+        gen = Generator(args.nz, args.nc, args.ngf).to(device)
+
         if args.training:
             gen.load_state_dict(torch.load(os.path.join(dirname, "generator.pth")))
         else:
             assert args.saved_model_name is not None, "Please specify the saved model name"
+            assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
             gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
         
         gen.eval()
 
         with torch.no_grad():
             noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+            normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
+            to_pil = transforms.ToPILImage()
+
             fake = gen(noise).detach().cpu()
-            dirname = os.path.join(args.PATH_syn_data , timestamp)
+            fake = normalize(fake)
+
+            dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
             os.makedirs(dirname, exist_ok=True)
             np.savez(os.path.join(dirname, "wgangp_synthetic_data.npz"), fake=fake)
+
+            dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            np.savez(os.path.join(dirname, "wgangp_noise.npz"), noise=noise)
+
+            dirname = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            for i, img in enumerate(fake):
+                pil_img = to_pil(img)
+                save_path = os.path.join(dirname, f"image_{i}.png")
+                pil_img.save(save_path)
 
 
 def update_args(args, config_dict):

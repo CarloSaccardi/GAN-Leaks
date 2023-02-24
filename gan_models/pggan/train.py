@@ -122,22 +122,21 @@ def main():
     timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
 
     print(args)
-    gen = Generator(args.nz, args.in_channels, args.nc).to(device)
-    critic = Discriminator(args.in_channels, args.nc).to(device)
-    
-    #initilize optimizers and scalers for FP16 training
-    opt_gen = torch.optim.Adam(gen.parameters(), lr=args.lr, betas=(0.0, 0.99))
-    opt_critic = torch.optim.Adam(critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
-    scaler_gen = torch.cuda.amp.GradScaler()
-    scaler_critic = torch.cuda.amp.GradScaler()
-    
-    #TODO: add a function to get the loader and wandb
-    
-    gen.train()
-    critic.train()
-    step = int(log2(args.start_img_size / 4))
 
     if args.training:
+
+        gen = Generator(args.nz, args.in_channels, args.nc).to(device)
+        critic = Discriminator(args.in_channels, args.nc).to(device)
+        
+        #initilize optimizers and scalers for FP16 training
+        opt_gen = torch.optim.Adam(gen.parameters(), lr=args.lr, betas=(0.0, 0.99))
+        opt_critic = torch.optim.Adam(critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
+        scaler_gen = torch.cuda.amp.GradScaler()
+        scaler_critic = torch.cuda.amp.GradScaler()
+        
+        gen.train()
+        critic.train()
+        step = int(log2(args.start_img_size / 4))
     
         for num_epochs in PROGRESSIVE_EPOCHS[step:]:
             alpha = 1e-5 #increase to 1 over the course of the epoch
@@ -161,10 +160,9 @@ def main():
 
                 #wandb logging and save the model
                 if args.wandb:
-                    wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
-
                     #visualize progress after every epoch in wandb
                     with torch.no_grad():
+                        wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
                         noise = torch.randn(1, args.nz, 1, 1, device=device)
                         fake = gen(noise, step, alpha)
                         grid = torchvision.utils.make_grid(fake, normalize=True)
@@ -182,20 +180,39 @@ def main():
     if args.generate:
         #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
 
+        gen = Generator(args.nz, args.in_channels, args.nc).to(device)
+
         if args.training:
             gen.load_state_dict(torch.load(os.path.join(dirname, "generator.pth")))
         else:
             assert args.saved_model_name is not None, "Please specify the saved model name"
+            assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
             gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
         
         gen.eval()
 
         with torch.no_grad():
             noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+            normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
+            to_pil = transforms.ToPILImage()
+
             fake = gen(noise).detach().cpu()
-            dirname = os.path.join(args.PATH_syn_data , timestamp)
+            fake = normalize(fake)
+
+            dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
             os.makedirs(dirname, exist_ok=True)
             np.savez(os.path.join(dirname, "pggan_synthetic_data.npz"), fake=fake)
+
+            dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            np.savez(os.path.join(dirname, "pggan_noise.npz"), noise=noise)
+
+            dirname = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            for i, img in enumerate(fake):
+                pil_img = to_pil(img)
+                save_path = os.path.join(dirname, f"image_{i}.png")
+                pil_img.save(save_path)
 
 
 def update_args(args, config_dict):

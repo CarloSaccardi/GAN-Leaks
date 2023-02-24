@@ -118,12 +118,9 @@ def main():
                     )
             
             if args.wandb:
-                
-                #log metrics to wandb
-                wandb.log({"epoch": epoch, "loss_disc": lossD.item(), "loss_gen": lossG.item()})
-
                 #visualize progress after each epoch in wandb
                 with torch.no_grad():   
+                    wandb.log({"epoch": epoch, "loss_disc": lossD.item(), "loss_gen": lossG.item()})
                     fake_wb = gen(fixed_noise).detach().cpu()#shape (1, 3, 64, 64)
                     grid = torchvision.utils.make_grid(fake_wb[0], normalize=True)
                     wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})

@@ -3,6 +3,8 @@ import numpy as np
 import fnmatch
 import PIL.Image
 import matplotlib
+import torchvision.transforms as transforms
+import cv2
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -91,13 +93,8 @@ def read_image(filepath, resolution=64, cx=89, cy=121):
     if shape == (resolution, resolution, 3):
         pass
     else:
-        img = img[cy - 64: cy + 64, cx - 64: cx + 64]
-        resize_factor = 128 // resolution
-        img = img.astype(np.float32)
-        while resize_factor > 1:
-            img = (img[0::2, 0::2, :] + img[0::2, 1::2, :] + img[1::2, 0::2, :] + img[1::2, 1::2, :]) * 0.25
-            resize_factor -= 1
-        img = np.rint(img).clip(0, 255).astype(np.uint8)
+        img = cv2.resize(img, (64, 64), interpolation=cv2.INTER_CUBIC)
+
 
     img = img.astype(np.float32) / 255.
     img = img * 2 - 1.
