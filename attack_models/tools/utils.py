@@ -36,29 +36,6 @@ def save_files(save_dir, file_name_list, array_list):
         np.save(os.path.join(save_dir, file_name_list[i]), array_list[i], allow_pickle=False)
 
 
-def load_model_from_checkpoint(checkpoint_dir, saver, sess):
-    '''
-    load a pre-trained model from the checkpoint file directory
-    :param checkpoint_dir: directory for the checkpoint file
-    :param saver: tf.saver
-    :param sess: session
-    :return:
-    '''
-    import tensorflow as tf
-
-    print(" [*] Reading checkpoints...", checkpoint_dir)
-    ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
-    if ckpt and ckpt.model_checkpoint_path:
-        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
-        saver.restore(sess, os.path.join(checkpoint_dir, ckpt_name))
-        counter = int(ckpt_name.split('-')[-1])
-        print(" [*] Success to read {}".format(ckpt_name))
-        return True, counter
-    else:
-        print(" [*] Failed to find a checkpoint")
-        return False, 0
-
-
 def get_filepaths_from_dir(data_dir, ext):
     '''
     return all the file paths with extension 'ext' in the given directory 'data_dir'

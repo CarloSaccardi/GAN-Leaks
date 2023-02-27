@@ -72,7 +72,7 @@ def find_knn(nn_obj, query_imgs, args):
     for i in tqdm(range(len(query_imgs) // args.BATCH_SIZE)):
         x_batch = query_imgs[i * args.BATCH_SIZE:(i + 1) * args.BATCH_SIZE]
         x_batch = np.reshape(x_batch, [args.BATCH_SIZE, -1])
-        dist_batch, idx_batch = nn_obj.kneighbors(x_batch, args.K)
+        dist_batch, idx_batch = nn_obj.kneighbors(x_batch, args.K, return_distance=True)
         dist.append(dist_batch)
         idx.append(idx_batch)
 
