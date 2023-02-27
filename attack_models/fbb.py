@@ -3,7 +3,7 @@ import os
 import pickle
 import argparse
 from tqdm import tqdm
-from tools.utils import *
+from utils import *
 from sklearn.neighbors import NearestNeighbors
 
 ### Hyperparameters
@@ -70,11 +70,11 @@ def find_knn(nn_obj, query_imgs, args):
     dist = []
     idx = []
     for i in tqdm(range(len(query_imgs) // args.BATCH_SIZE)):
-        x_batch = query_imgs[i * args.BATCH_SIZE:(i + 1) * args.BATCH_SIZE]
-        x_batch = np.reshape(x_batch, [args.BATCH_SIZE, -1])
+        x_batch = query_imgs[i * args.BATCH_SIZE:(i + 1) * args.BATCH_SIZE]#(BATCH_SIZE, 64, 64, 3)
+        x_batch = np.reshape(x_batch, [args.BATCH_SIZE, -1])#(BATCH_SIZE, 64*64*3)
         dist_batch, idx_batch = nn_obj.kneighbors(x_batch, args.K, return_distance=True)
-        dist.append(dist_batch)
-        idx.append(idx_batch)
+        dist.append(dist_batch)#distance between query samples to its KNNs among generated samples
+        idx.append(idx_batch)#index of the KNNs
 
     try:
         dist = np.concatenate(dist)
@@ -123,7 +123,7 @@ def main():
 
     ### nearest neighbor search
     nn_obj = NearestNeighbors(n_neighbors=args.K)
-    nn_obj.fit(gen_feature)
+    nn_obj.fit(gen_feature)#fitting NN classifier on the generated samples
 
     ### positive query
     pos_loss, pos_idx = find_knn(nn_obj, pos_query_imgs, args)

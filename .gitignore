@@ -1,9 +1,11 @@
 
-.pyc
-.log
-.pth 
+*.pyc
+*.log
+*.pth 
 wandb
-.npz
+*.npz
+*.png
+*.jpg
 # result & data folders
 */results
 *$results
@@ -19,7 +21,14 @@ data*
 model_save*
 */syn_data
 *$syn_data
-syn_data*
+syn_data*c
+*/fbb_attack
+*$fbb_attack
+fbb_attack*
+*/fbb_attack
+*$fbb_attack
+fbb_attack*
+
 
 # Pycharm
 .idea/
