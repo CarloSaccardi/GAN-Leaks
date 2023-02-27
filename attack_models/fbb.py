@@ -5,6 +5,10 @@ import argparse
 from tqdm import tqdm
 from utils import *
 from sklearn.neighbors import NearestNeighbors
+import wandb
+import yaml
+import warnings
+
 
 ### Hyperparameters
 
@@ -30,6 +34,8 @@ def parse_arguments():
                         help='generated image resolution')
     parser.add_argument('--K', type=int, default=5)
     parser.add_argument('--BATCH_SIZE', type=int, default=10)
+    parser.add_argument('--local_config', type=str, default=None)
+    parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
     return parser.parse_args()
 
 
@@ -102,8 +108,8 @@ def find_pred_z(gen_z, idx, args):
 #############################################################################################################
 # main
 #############################################################################################################
-def main():
-    args, save_dir, load_dir_images, load_dir_noise = check_args(parse_arguments())
+def main(args_):
+    args, save_dir, load_dir_images, load_dir_noise = check_args(args_)
     resolution = args.resolution
 
     ### load generated samples
@@ -136,5 +142,24 @@ def main():
     save_files(save_dir, ['neg_loss', 'neg_idx', 'neg_z'], [neg_loss, neg_idx, neg_z])
 
 
+def update_args(args, config_dict):
+    for key, val in config_dict.items():
+        setattr(args, key, val)  
+
+
 if __name__ == '__main__':
-    main()
+
+    args = parse_arguments()
+
+    if args.local_config is not None:
+        with open(str(args.local_config), "r") as f:
+            config = yaml.safe_load(f)
+        update_args(args, config)
+        if args.wandb:
+            wandb_config = vars(args)
+            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
+            # update_args(args, dict(run.config))
+    else:
+        warnings.warn("No config file was provided. Using default parameters.")
+
+    main(args)

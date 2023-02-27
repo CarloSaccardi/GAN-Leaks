@@ -1,0 +1,8 @@
+############ ATTACK ##########
+exp_name: DEBUG1
+syn_data_path: syn_data\dcgan\\npz_images\_2023_02_24__13_43_20\dcgan_synthetic_data.npz
+noise_dir: syn_data\dcgan\\npz_noise\_2023_02_24__13_43_20\dcgan_noise.npz
+data_num: 64
+
+
+############ METRICS #########s

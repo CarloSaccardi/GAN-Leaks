@@ -3,6 +3,9 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 from sklearn import metrics
+import yaml
+import warnings
+import wandb
 
 
 ############################################################################
@@ -40,8 +43,10 @@ def parse_arguments():
                         help='type of the attack')
     parser.add_argument('--reference_load_dir', '-rdir', default=None,
                         help='directory for the reference model result (optional)')
-    parser.add_argument('--save_dir', '-sdir', type=str, default=None,
+    parser.add_argument('--save_dir', '-sdir', type=bool, default=True,
                         help='directory for saving the evaluation results (optional)')
+    parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
+    parser.add_argument('--local_config', type=str, default=None)
     return parser.parse_args()
 
 
@@ -49,7 +54,6 @@ def parse_arguments():
 # main
 #############################################################################################################
 def main():
-    args = parse_arguments()
     attack_type = args.attack_type
     result_load_dir = args.result_load_dir
     reference_load_dir = args.reference_load_dir
@@ -94,10 +98,29 @@ def main():
     plt.ylabel('true positive')
     plt.title('ROC curve')
 
-    if save_dir is not None:
-        plt.savefig(os.path.join(save_dir, 'roc.png'))
+    if save_dir:
+        plt.savefig(os.path.join(result_load_dir, 'roc.png'))
     plt.show()
 
 
+def update_args(args, config_dict):
+    for key, val in config_dict.items():
+        setattr(args, key, val)  
+
+
 if __name__ == '__main__':
+
+    args = parse_arguments()
+    args.local_config = 'attack_models\\attack_eval.yaml'
+    if args.local_config is not None:
+        with open(str(args.local_config), "r") as f:
+            config = yaml.safe_load(f)
+        update_args(args, config)
+        if args.wandb:
+            wandb_config = vars(args)
+            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
+            # update_args(args, dict(run.config))
+    else:
+        warnings.warn("No config file was provided. Using default parameters.")
+
     main()
