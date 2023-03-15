@@ -6,6 +6,8 @@ wandb
 *.npz
 *.png
 *.jpg
+*.pkl
+.*txt
 # result & data folders
 */results
 *$results
@@ -16,6 +18,7 @@ datasets*
 */data
 *$data
 data*
+*data
 */model_save
 *$model_save
 model_save*

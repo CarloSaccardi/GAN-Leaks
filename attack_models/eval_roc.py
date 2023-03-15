@@ -98,6 +98,15 @@ def main():
     plt.ylabel('true positive')
     plt.title('ROC curve')
 
+    #push to wandb
+    if args.wandb:
+        wandb.log({"roc": wandb.Image(plt)})
+        wandb.log({"AUC ROC value": auc})
+        wandb.log({"AP": ap})
+        wandb.log({"fpr": fpr})
+        wandb.log({"tpr": tpr})
+        wandb.log({"threshold": threshold})
+
     if save_dir:
         plt.savefig(os.path.join(result_load_dir, 'roc.png'))
     plt.show()
