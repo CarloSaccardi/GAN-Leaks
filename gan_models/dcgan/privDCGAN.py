@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as dset
-from torch.utils.data import Subset, TensorDataset
+from torch.utils.data import Subset, TensorDataset, ConcatDataset
 import numpy as np
 import numpy as np
 import wandb
@@ -33,6 +33,7 @@ parser.add_argument('--dp_delay', type=int, default=100, help='starting epoch fo
 parser.add_argument('--out_size', type=int, help='number of output images')
 parser.add_argument('--beta1', type=float, default=0.5 , help='beta1 for adam. default=0.5')
 parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for adam. default=0.999')
+parser.add_argument('--privacy_ratio', type=float, default=0.5, help='privacy ratio')
 parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument('--local_config', default=None, help='path to config file')
@@ -67,11 +68,8 @@ transform = transforms.Compose([
 dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-#dataset_N = torch.utils.data.random_split(dataset, [len(dataset)//args.N_splits for _ in range(args.N_splits)])
-#dataloader_N = [torch.utils.data.DataLoader(i, batch_size=args.batch_size, shuffle=True) for i in dataset_N]
-#Y_train = [[i]*len(dataset_N[i]) for i in range(len(dataset_N))]
-#Y_train = [item for sublist in Y_train for item in sublist]
 
+####################### SPLIT DATASET ############################
 X = []
 t = len(dataset)//args.N_splits
 y_train = []
@@ -136,20 +134,17 @@ def main():
 
     train_privGAN(genS = [gen]*args.N_splits ,
                    discS = [disc]*args.N_splits, 
-                   private_disc = private_disc,
+                   criterion = criterion,
                    opt_gen = opt_gen, 
                    opt_disc = opt_disc, 
+                   private_disc=private_disc,
+                   opt_private_disc = opt_private_disc,
                    t = t, 
-                   criterion = criterion,
                    loss_fn = loss_fn)
 
 
 def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn):
     #train generator and discriminator for gen_epochs
-
-    dLosses = np.zeros((args.N_splits, args.num_epochs))
-    dpLosses = np.zeros(args.num_epochs)
-    gLosses = np.zeros(args.num_epochs)
     batchCount = int(t // args.batch_size)
 
     for epoch in range(args.num_epochs):
@@ -157,11 +152,10 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
         d_t = np.zeros((args.N_splits, batchCount))
         dp_t = np.zeros(batchCount)
         g_t = np.zeros(batchCount)
-        imgsF = []
-        yDis2 = []
-        yDis2f = []
+        privD_dataset = []
+        gen_dataset = []
 
-        #for each dataloader in dataloader_N, train the generator and discriminator
+        #for each dataloader in dataloader_N, train the discriminator
         for split in range(args.N_splits):
 
             imgsF_split = []
@@ -183,31 +177,68 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 lossD.backward()
                 opt_disc.step()
 
+                d_t[split, i] = lossD.item()
 
-            imgsF_dataset = TensorDataset(torch.tensor(np.concatenate(imgsF_split, axis=0), dtype=torch.float32))
+            #prepare labels for generator: random numbers as the goal is not only too fool 
+            #the discriminator but also the private discriminator. A random lable makes the
+            #generator generate images that are not too similar to the ones from the same split
+
+
+            X_fakes_split = torch.tensor(np.concatenate(imgsF_split, axis=0), dtype=torch.float32)
             l = list(range(args.N_splits))
             del(l[split])
-            yDis2 += [split]*len(X[split])
-            yDis2f += [np.random.choice(l,(len(X[split]),))]
+            gen_y =  np.random.choice( l, ( len( X[split] ) , ) ) 
+            gen_y = torch.tensor(gen_y, dtype=torch.float32).to(device)
+            gen_dataset.append(TensorDataset(X_fakes_split, gen_y))
 
             if epoch > args.dp_delay:
-                imgsF_dataloader = torch.utils.data.DataLoader(imgsF_dataset, batch_size=args.batch_size, shuffle=True)
+                privD_y = torch.tensor([split]*len(X[split]), dtype=torch.float32).to(device)
+                privD_dataset.append(TensorDataset(X_fakes_split, privD_y))
 
-                #train private discriminator with yDisc2 as labels
-                for i, (imgs, _) in enumerate(imgsF_dataloader):
+        if epoch > args.dp_delay:
 
-                    imgs = imgs.to(device)
-                    batch_size = imgs.shape[0]
-                    lables = yDis2f[i*batch_size:(i+1)*batch_size]
-                    lables = torch.tensor(lables).to(device)
+            #concatenate all the data from all the splits
+            imgsF_dataset = ConcatDataset(privD_dataset)
+            imgsF_dataloader = torch.utils.data.DataLoader(imgsF_dataset, batch_size=args.batch_size, shuffle=True)
 
-                    opt_private_disc.zero_grad()
-                    output = private_disc(imgs).reshape(-1)
+            #train private discriminator with yDisc2 as labels
+            for i, (imgs, lables) in enumerate(imgsF_dataloader):
 
-                    loss = loss_fn(output, lables)
-                    loss.backward()
-                    
-                    opt_private_disc.step()
+                imgs = imgs.to(device)
+                lables = lables.to(device)
+                output = private_disc(imgs).reshape(-1)
+                lossD_private = loss_fn(output, lables)
+
+                private_disc.zero_grad()
+                lossD_private.backward()
+                
+                opt_private_disc.step()
+
+                dp_t[i] = lossD_private.item()
+
+        #train generators: goal is to fool the discriminator and the private discriminator
+        for split in range(args.N_splits):
+
+            gen_dataset_train = ConcatDataset(gen_dataset)
+            gen_dataset_train = torch.utils.data.DataLoader(gen_dataset_train, batch_size=args.batch_size, shuffle=True)
+
+            for i, (imgs, lables) in enumerate(gen_dataset_train):
+
+                imgs = imgs.to(device)#this is the fake image
+                output1 = discS[split](imgs).reshape(-1)
+                output2 = private_disc(imgs).reshape(-1)
+
+                lossG_1 = criterion(output1, torch.ones_like(output1))
+                lossG_2 = args.privacy_ratio * loss_fn(output2, lables)
+
+                lossG = lossG_1 + lossG_2
+
+                genS[split].zero_grad()
+                lossG.backward()
+                opt_gen.step()
+            
+                g_t[i] = lossG.item()
+        
 
 
                 
