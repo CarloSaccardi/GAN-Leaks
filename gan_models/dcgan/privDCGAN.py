@@ -145,7 +145,7 @@ def main():
 
 def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn):
     #train generator and discriminator for gen_epochs
-    batchCount = int(t // args.batch_size)
+    batchCount = int(t // args.batch_size) + 1
 
     for epoch in range(args.num_epochs):
 
@@ -160,12 +160,12 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
 
             imgsF_split = []
 
-            for _, (imgs, _) in enumerate(X_loaders[split]):
+            for i, (imgs, _) in enumerate(X_loaders[split]):
 
                 imgs = imgs.to(device)
                 noise = torch.randn(args.batch_size, args.nz, 1, 1).to(device)
                 fake = genS[split](noise)
-                imgsF_split += [fake.detach().numpy()]
+                imgsF_split += [fake]#no detach here as we want to train the generator
 
                 # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
                 disc_real = discS[split](imgs).reshape(-1)
@@ -183,11 +183,10 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             #the discriminator but also the private discriminator. A random lable makes the
             #generator generate images that are not too similar to the ones from the same split
 
-
-            X_fakes_split = torch.tensor(np.concatenate(imgsF_split, axis=0), dtype=torch.float32)
+            X_fakes_split = torch.cat(imgsF_split, axis=0)
             l = list(range(args.N_splits))
             del(l[split])
-            gen_y =  np.random.choice( l, ( len( X[split] ) , ) ) 
+            gen_y =  np.random.choice( l, ( len( X_fakes_split ) , ) ) 
             gen_y = torch.tensor(gen_y, dtype=torch.float32).to(device)
             gen_dataset.append(TensorDataset(X_fakes_split, gen_y))
 
@@ -238,6 +237,9 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 opt_gen.step()
             
                 g_t[i] = lossG.item()
+
+        with torch.no_grad():
+            print(f"Epoch {epoch} of {args.num_epochs} complete. Loss D: {d_t.mean()}, Loss DP: {dp_t.mean()}, Loss G: {g_t.mean()}")
         
 
 
