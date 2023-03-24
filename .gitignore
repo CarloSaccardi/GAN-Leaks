@@ -9,6 +9,7 @@ wandb
 *.pkl
 .*txt
 # result & data folders
+Dockerfile
 */results
 *$results
 results*

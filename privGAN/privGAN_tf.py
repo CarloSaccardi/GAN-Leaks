@@ -108,7 +108,6 @@ def MNIST_DiscriminatorPrivate(OutSize = 2, optim = Adam(lr=0.0002, beta_1=0.5))
     return discriminator
 
 
-
 def privGAN(X_train, generators = [MNIST_Generator(),MNIST_Generator()], 
             discriminators = [MNIST_Discriminator(),MNIST_Discriminator()],
             pDisc = MNIST_DiscriminatorPrivate(OutSize = 2), 
@@ -274,7 +273,8 @@ def privGAN(X_train, generators = [MNIST_Generator(),MNIST_Generator()],
 if __name__ == '__main__':
 
     # Load MNIST data and concatenate the train+test set
-    f = gzip.open('privGAN\mnist.pkl.gz', 'rb')
+    temp_path = os.path.join('privGAN', 'mnist.pkl.gz')
+    f = gzip.open(temp_path, 'rb')
     if sys.version_info < (3,):
         data = cPickle.load(f)
     else:

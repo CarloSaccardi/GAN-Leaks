@@ -46,6 +46,30 @@ class Discriminator(nn.Module):
     def forward(self, x):
         return self.disc(x)
     
+
+class PrivateDiscriminator(nn.Module):
+    def __init__(self, channel_img, feature_d):
+        super(PrivateDiscriminator, self).__init__()
+        self.disc = nn.Sequential(
+            # input is N x (nc) x 64 x 64
+            nn.Conv2d(channel_img, feature_d, kernel_size = 4, stride = 2, padding = 1), # 32x32
+            nn.LeakyReLU(0.2),
+            self._block(feature_d, feature_d * 2, 4, 2, 1),# 16x16
+            self._block(feature_d * 2, feature_d * 4, 4, 2, 1),# 8x8
+            self._block(feature_d * 4, feature_d * 8, 4, 2, 1),# 4x4
+            nn.Conv2d(feature_d * 8, 1, kernel_size = 4, stride = 2, padding = 0), # 1x1
+            nn.Softmax()
+        )
+
+    def _block(self, in_channels, out_channels, kernel_size, stride, padding):
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.2),
+        )
+        
+    def forward(self, x):
+        return self.disc(x)
     
     
 class Generator(nn.Module):
