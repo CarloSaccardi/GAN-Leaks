@@ -91,6 +91,8 @@ y_train = np.array(y_train) + 0.0
 
 fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
 
+torch.autograd.set_detect_anomaly(True)
+
 def main():
     #TODO: add seed for reproducibility and initialization of weights
     print(args)
@@ -150,8 +152,8 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
     for epoch in range(args.num_epochs):
 
         d_t = np.zeros((args.N_splits, batchCount))
-        dp_t = np.zeros(batchCount)
-        g_t = np.zeros(batchCount)
+        dp_t = np.zeros(batchCount * args.N_splits)
+        g_t = np.zeros(batchCount * args.N_splits)
         privD_dataset = []
         gen_dataset = []
 
@@ -163,7 +165,7 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             for i, (imgs, _) in enumerate(X_loaders[split]):
 
                 imgs = imgs.to(device)
-                noise = torch.randn(args.batch_size, args.nz, 1, 1).to(device)
+                noise = torch.randn(imgs.shape[0], args.nz, 1, 1).to(device)
                 fake = genS[split](noise)
                 imgsF_split += [fake]#no detach here as we want to train the generator
 
@@ -174,7 +176,7 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 lossD_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
                 lossD = (lossD_real + lossD_fake) / 2
                 discS[split].zero_grad()
-                lossD.backward()
+                lossD.backward(retain_graph=True)
                 opt_disc.step()
 
                 d_t[split, i] = lossD.item()
@@ -182,7 +184,6 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             #prepare labels for generator: random numbers as the goal is not only too fool 
             #the discriminator but also the private discriminator. A random lable makes the
             #generator generate images that are not too similar to the ones from the same split
-
             X_fakes_split = torch.cat(imgsF_split, axis=0)
             l = list(range(args.N_splits))
             del(l[split])
@@ -209,7 +210,7 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 lossD_private = loss_fn(output, lables)
 
                 private_disc.zero_grad()
-                lossD_private.backward()
+                lossD_private.backward(retain_graph=True)
                 
                 opt_private_disc.step()
 
@@ -223,7 +224,7 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
 
             for i, (imgs, lables) in enumerate(gen_dataset_train):
 
-                imgs = imgs.to(device)#this is the fake image
+                imgs = imgs.to(device)#this is the fake image, make sure gradient flows back to generator.
                 output1 = discS[split](imgs).reshape(-1)
                 output2 = private_disc(imgs).reshape(-1)
 
@@ -233,7 +234,7 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 lossG = lossG_1 + lossG_2
 
                 genS[split].zero_grad()
-                lossG.backward()
+                lossG.backward()#TODO: bug here
                 opt_gen.step()
             
                 g_t[i] = lossG.item()
