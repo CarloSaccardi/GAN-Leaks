@@ -1,1 +1,6 @@
-training: Ture
+
+num_epochs: 50
+data_name: celebAhuge
+saved_model_name: model_save/dcgan/_2023_04_14__10_14_28
+training: False
+generate: True

@@ -32,6 +32,9 @@ fbb_attack*
 */fbb_attack
 *$fbb_attack
 fbb_attack*
+*.conda
+
+
 
 
 # Pycharm

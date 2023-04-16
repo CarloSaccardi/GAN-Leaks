@@ -16,6 +16,7 @@ import yaml
 import warnings
 import datetime
 import torchvision
+from utils import CustomDataset
 
 from model_torch import Generator, Discriminator, initialize_weights
 
@@ -49,26 +50,23 @@ parser.add_argument("--generate", type=bool, default=True, help="Generating Syth
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 args = parser.parse_args()
 
-
-transform = transforms.Compose([
-                transforms.Resize((args.image_size, args.image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
-                ])
-
-
-dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
-
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-
-fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
-
 def main():
+
     #TODO: add seed for reproducibility and initialization of weights
     print(args)
+
+    transform = transforms.Compose([
+                    transforms.Resize((args.image_size, args.image_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
+                    ])
+    dataset = CustomDataset(root= os.path.join('data', args.data_name), transform=transform, n = 10000)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+
+
+    fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)    
     
     now = datetime.datetime.now() # To create a unique folder for each run
     timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
@@ -88,7 +86,9 @@ def main():
         disc.train()
 
         for epoch in range(args.num_epochs):
-            for batch_idx, (real, _) in enumerate(dataloader):
+            #for batch_idx, (real, _) in enumerate(dataloader):--> miniCelebA
+            #TODO: add a condition for CelebA
+            for batch_idx, (real) in enumerate(dataloader):
                 
                 real = real.to(device)
                 noise = torch.randn(args.batch_size, args.nz, 1, 1).to(device)
@@ -161,7 +161,7 @@ def main():
 
             dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
             os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, "dcgan_noise.npz"), noise=noise)
+            np.savez(os.path.join(dirname, "dcgan_noise.npz"), noise=noise.cpu())
 
             dirname = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
             os.makedirs(dirname, exist_ok=True)
@@ -177,7 +177,7 @@ def update_args(args, config_dict):
 
 
 if __name__ == '__main__':
-
+    args.local_config='gan_models/dcgan/dcgan_config.yaml'
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)
