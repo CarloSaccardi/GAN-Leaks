@@ -196,7 +196,7 @@ def main():
             normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
             to_pil = transforms.ToPILImage()
 
-            fake = gen(noise, step, alpha).detach().cpu()
+            fake = gen(noise, 4, 1).detach().cpu()
             fake = normalize(fake)
 
             dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
