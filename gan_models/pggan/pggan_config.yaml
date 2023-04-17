@@ -1,1 +1,6 @@
-wandb: firstRun
+data_name: celebAhuge
+wandb: PGGAN
+training: False
+generate: False
+resume: True
+saved_model_name: "model_save/pggan/_2023_04_17__15_46_24"

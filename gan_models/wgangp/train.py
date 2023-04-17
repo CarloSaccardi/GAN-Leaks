@@ -63,7 +63,9 @@ transform = transforms.Compose([
                 transforms.Normalize([0.5]*args.nc, [0.5]*args.nc),
                     ]) 
 
-dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
+#dataset = dset.ImageFolder(root= os.path.join('data', args.data_name), transform=transform)
+
+dataset = np.load("data/MIMIC_III/Z_count_mimic.matrix", allow_pickle=True)
 
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 

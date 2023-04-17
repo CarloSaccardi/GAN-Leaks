@@ -17,12 +17,12 @@ import yaml
 import datetime
 
 from model_torch import Generator, Discriminator
-from utils import gradient_penalty
+from utils import gradient_penalty, CustomDataset
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
-parser.add_argument('--batch_size', type=list, default=[16, 16, 16, 16, 16, 16, 16, 8, 4], help='batch size for each resolution')
+parser.add_argument('--batch_size', type=list, default=[16, 16, 16, 16, 16], help='batch size for each resolution')
 parser.add_argument('--image_size', type=int, default=64, help='the height / width of the input image to network, default=64')
 parser.add_argument('--nc', type=int, default=3, help='number of color channels in the input image, default=3')
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector, default=100')
@@ -65,7 +65,7 @@ def get_loader(imge_size):
     
     batch_size = args.batch_size[int(log2(imge_size) / 4)]
     data_path = os.path.join('data', args.data_name)
-    dataset = datasets.ImageFolder(root=data_path, transform=transform)
+    dataset = CustomDataset(root= os.path.join('data', args.data_name), transform=transform, n = 10000)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     return loader, dataset
     
@@ -73,7 +73,7 @@ def get_loader(imge_size):
 def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scaler_gen, loader):
     
     loop = tqdm(loader, leave=True)
-    for _, (real, _) in enumerate(loop):
+    for _, (real) in enumerate(loop):
         
         real = real.to(device)
         cur_batch_size = real.shape[0]
@@ -192,11 +192,11 @@ def main():
         gen.eval()
 
         with torch.no_grad():
-            noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+            noise = torch.randn(128, args.nz, 1, 1, device=device)
             normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
             to_pil = transforms.ToPILImage()
 
-            fake = gen(noise).detach().cpu()
+            fake = gen(noise, step, alpha).detach().cpu()
             fake = normalize(fake)
 
             dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
@@ -205,7 +205,7 @@ def main():
 
             dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
             os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, "pggan_noise.npz"), noise=noise)
+            np.savez(os.path.join(dirname, "pggan_noise.npz"), noise=noise.cpu())
 
             dirname = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
             os.makedirs(dirname, exist_ok=True)
@@ -213,6 +213,68 @@ def main():
                 pil_img = to_pil(img)
                 save_path = os.path.join(dirname, f"image_{i}.png")
                 pil_img.save(save_path)
+
+
+    if args.resume: 
+
+        #load the saved model, resume training, and save the model.
+
+        gen = Generator(args.nz, args.in_channels, args.nc).to(device)
+        critic = Discriminator(args.in_channels, args.nc).to(device)
+        step = 4
+        gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
+        critic.load_state_dict(torch.load(os.path.join(args.saved_model_name, "critic.pth")))
+        opt_gen = torch.optim.Adam(gen.parameters(), lr=args.lr, betas=(0.0, 0.99))
+        opt_critic = torch.optim.Adam(critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
+        scaler_gen = torch.cuda.amp.GradScaler()
+        scaler_critic = torch.cuda.amp.GradScaler()
+
+        gen.train()
+        critic.train()
+
+        for num_epochs in PROGRESSIVE_EPOCHS[step:]:
+            alpha = 1e-5
+            loader, _ = get_loader(4*2**step)
+            print(f"image resolution: {4*2**step}x{4*2**step}")
+
+            for epoch in range(num_epochs):
+
+                loss_CRITIC, loss_GEN, alpha = train_fn(critic, 
+                                                        gen, 
+                                                        step, 
+                                                        alpha, 
+                                                        opt_critic, 
+                                                        opt_gen, 
+                                                        scaler_critic, 
+                                                        scaler_gen, 
+                                                        loader)
+                
+                #print the losses for every epoch
+                print(f"epoch: {epoch}, loss_critic: {loss_CRITIC}, loss_gen: {loss_GEN}")
+
+                #wandb logging and save the model
+                if args.wandb:
+                    #visualize progress after every epoch in wandb
+                    with torch.no_grad():
+                        wandb.log({"loss_critic": loss_CRITIC, "loss_gen": loss_GEN})
+                        noise = torch.randn(1, args.nz, 1, 1, device=device)
+                        fake = gen(noise, step, alpha)
+                        grid = torchvision.utils.make_grid(fake, normalize=True)
+                        wandb.log({"progress": [wandb.Image(grid, caption=f"step: {step}, alpha: {alpha}")]})
+            
+            step += 1
+
+        if args.save_model:
+            dirname = os.path.join(args.PATH, timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
+            torch.save(critic.state_dict(), os.path.join(dirname, "critic.pth"))
+            print("saved model")
+
+        
+
+
+
 
 
 def update_args(args, config_dict):
