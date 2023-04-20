@@ -93,7 +93,7 @@ def main():
     
     gen = Generator(args.nz, args.nc, args.ngf).to(device)
     disc = Discriminator(args.nc, args.ndf).to(device)
-    private_disc = PrivateDiscriminator(args.nc, args.ndf).to(device)
+    private_disc = PrivateDiscriminator(args.nc, args.ndf, args.N_splits).to(device)
     initialize_weights(gen)
     initialize_weights(disc)
     initialize_weights(private_disc)
@@ -116,15 +116,17 @@ def main():
                 imgs = imgs.to(device)
                 batch_size = imgs.shape[0]
                 lables = y_train[i*batch_size:(i+1)*batch_size]
-                lables = torch.tensor(lables).to(device)
+                lables = torch.tensor(lables).type(torch.LongTensor).to(device)
 
                 opt_private_disc.zero_grad()
-                output = private_disc(imgs).reshape(-1)
+                output = private_disc(imgs).reshape(-1, args.N_splits)
 
                 loss = loss_fn(output, lables)
                 loss.backward()
 
                 opt_private_disc.step()
+
+            print("pre-train private discriminator loss: ", loss.item(), "epoch: ", epoch)
 
 
         train_privGAN(genS = [gen]*args.N_splits ,
@@ -183,8 +185,8 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 #train private discriminator. Label is the split index of the data. Goal is to determine which
                 #generator produced the data. Hence, we use the split index as the label
                 if epoch > args.dp_delay:
-                    output = private_disc(fake.detach()).reshape(-1)
-                    labels_Dp = torch.tensor([split]*imgs.shape[0], dtype=torch.float32).to(device)
+                    output = private_disc(fake.detach()).reshape(-1, args.N_splits)
+                    labels_Dp = torch.tensor([split]*imgs.shape[0], dtype=torch.float32).type(torch.LongTensor).to(device)
 
                     loss_Dp = loss_fn(output, labels_Dp)
 
@@ -200,11 +202,11 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 # Hence, we use different split index as the label for loss_fn, and ones as the label for
                 #criterion.
                 output1 = discS[split](fake).reshape(-1)
-                output2 = private_disc(fake).reshape(-1)
+                output2 = private_disc(fake).reshape(-1, args.N_splits)
                 labels_gen = gen_y[i*imgs.shape[0]:(i+1)*imgs.shape[0]] #labels is a different split index to fool the private discriminator
 
                 lossG_1 = criterion(output1, torch.ones_like(output1))
-                lossG_2 = args.privacy_ratio * loss_fn(output2, labels_gen.to(device))
+                lossG_2 = args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
 
                 lossG = lossG_1 + lossG_2
 
@@ -228,7 +230,8 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
                 fake_wb = genS[0](fixed_noise).detach().cpu()#shape (1, 3, 64, 64)
                 grid = torchvision.utils.make_grid(fake_wb[0], normalize=True)
-                wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
+                if args.wandb:
+                    wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
 
 
     #save the models
@@ -285,6 +288,7 @@ def update_args(args, config_dict):
 
 if __name__ == '__main__':
 
+    #args.local_config = "gan_models/dcgan/dcgan_config.yaml"
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)

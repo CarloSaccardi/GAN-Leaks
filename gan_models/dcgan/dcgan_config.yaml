@@ -1,4 +1,7 @@
 
-num_epochs: 50
+num_epochs: 20
+disc_epochs: 2
+dp_delay: 1
 data_name: celebAhuge
-wandb: privDCGAN
+num_images: 100
+N_splits: 2

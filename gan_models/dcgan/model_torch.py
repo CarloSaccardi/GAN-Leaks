@@ -48,7 +48,7 @@ class Discriminator(nn.Module):
     
 
 class PrivateDiscriminator(nn.Module):
-    def __init__(self, channel_img, feature_d):
+    def __init__(self, channel_img, feature_d, output_dim):
         super(PrivateDiscriminator, self).__init__()
         self.disc = nn.Sequential(
             # input is N x (nc) x 64 x 64
@@ -57,7 +57,7 @@ class PrivateDiscriminator(nn.Module):
             self._block(feature_d, feature_d * 2, 4, 2, 1),# 16x16
             self._block(feature_d * 2, feature_d * 4, 4, 2, 1),# 8x8
             self._block(feature_d * 4, feature_d * 8, 4, 2, 1),# 4x4
-            nn.Conv2d(feature_d * 8, 1, kernel_size = 4, stride = 2, padding = 0), # 1x1
+            nn.Conv2d(feature_d * 8, output_dim, kernel_size = 4, stride = 2, padding = 0), # 1x1
             nn.Softmax()
         )
 
