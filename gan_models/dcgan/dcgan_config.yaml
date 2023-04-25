@@ -1,7 +1,9 @@
 
-num_epochs: 20
+num_epochs: 3
 disc_epochs: 2
 dp_delay: 1
+ailab: False
 data_name: celebAhuge
-num_images: 100
-N_splits: 2
+training: True
+generate: True
+num_images: 2

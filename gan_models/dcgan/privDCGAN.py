@@ -10,12 +10,12 @@ import torchvision.datasets as dset
 from torch.utils.data import Subset, TensorDataset, ConcatDataset
 import numpy as np
 import numpy as np
-import wandb
 import yaml
 import warnings
 import datetime
 import torchvision
 from utils import CustomDataset
+import itertools
 
 from model_torch import Generator, Discriminator, PrivateDiscriminator, initialize_weights
 
@@ -37,9 +37,11 @@ parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for adam. 
 parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument('--local_config', default=None, help='path to config file')
+parser.add_argument('--hyperparameter_search',  default=None, help='path to config file')
+parser.add_argument('--num_images', type=int, default=1000, help='number of images to use for training')
 
-parser.add_argument("--PATH", type=str, default=os.path.join(os.getcwd(),'model_save', 'privDCGAN'), help="Directory to save model")
-parser.add_argument("--PATH_syn_data", type=str, default=os.path.join(os.getcwd(), 'syn_data', 'privDCGAN'), help="Directory to save synthetic data")
+parser.add_argument("--PATH", type=str, default=os.path.join(os.getcwd(), 'ersecki-thesis', 'model_save', 'privDCGAN'), help="Directory to save model")
+parser.add_argument("--PATH_syn_data", type=str, default=os.path.join(os.getcwd(), 'ersecki-thesis', 'syn_data', 'privDCGAN'), help="Directory to save synthetic data")
 
 parser.add_argument("--save_model", type=bool, default=True, help="Save model or not")
 parser.add_argument("--saved_model_name", type=str, default=None, help="Saved model name")
@@ -50,6 +52,8 @@ parser.add_argument("--generate", type=bool, default=True, help="Generating Syth
 parser.add_argument("--N_splits", type=bool, default=2, help="number of gen-disc pairs")
 parser.add_argument('--privacy_ratio', type=float, default=0.5, help='privacy ratio')
 
+parser.add_argument('--ailab', type=bool, default=False, help='ailab server or not')
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 args = parser.parse_args()
@@ -59,77 +63,101 @@ fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
 torch.autograd.set_detect_anomaly(True)
 
 def main():
-    #TODO: add seed for reproducibility and initialization of weights
-    print(args)
 
-    transform = transforms.Compose([
-                    transforms.Resize((args.image_size, args.image_size)),
-                    transforms.ToTensor(),
-                    transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
-                    ])
-    dataset = CustomDataset(root= os.path.join('data', args.data_name), transform=transform, n = 10000)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    #### HYPERPARAMETER SEARCH, DEFINE PARAMETERS TO TUNE ####
+    if args.hyperparameter_search is not None:
+        with open(str(args.hyperparameter_search), "r") as f:
+            config = yaml.safe_load(f)
+        update_args(args, config)
+        keys, values = zip(*config.items())
+        experiments = [dict(zip(keys, v)) for v in itertools.product(*values)]#make a list of possible combinations for hyperparameters 
+        args.params_keys = '-'.join(keys)
+    else:
+        experiments = [{}]
+        args.params_values = None
+        args.params_keys = None
+    ###############################################s
 
+    for i in range(len(experiments)):
 
-    ####################### SPLIT DATASET ############################
-    X = []
-    t = len(dataset)//args.N_splits
-    y_train = []
-    X_loaders = []
+        if len(experiments)>1:#if we are doing hyperparameter search
+            exp = experiments[i]#take the i-th combination of hyperparameters
+            update_args(args, exp)#update args with the hyperparameters
+            args.params_values = '-'.join([str(v) for v in exp.values()])#string of hyperparameters values    
 
-    for i in range(args.N_splits):
-        if i<args.N_splits-1:
-            dataset_split = Subset(dataset, range(i*t, (i+1)*t))
-            X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
-            X += [dataset_split]
-            y_train += [i]*t
-        else:
-            dataset_split = Subset(dataset, range(i*t, len(dataset)))
-            X += [dataset_split]
-            X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
-            y_train += [i]*(len(dataset)-i*t)
+        print(args)
 
-    y_train = np.array(y_train) + 0.0 
-    
-    gen = Generator(args.nz, args.nc, args.ngf).to(device)
-    disc = Discriminator(args.nc, args.ndf).to(device)
-    private_disc = PrivateDiscriminator(args.nc, args.ndf, args.N_splits).to(device)
-    initialize_weights(gen)
-    initialize_weights(disc)
-    initialize_weights(private_disc)
-
-    opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
-    opt_disc = optim.Adam(disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
-    opt_private_disc = optim.Adam(private_disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
-    loss_fn = torch.nn.CrossEntropyLoss()
-    criterion = torch.nn.BCELoss()
-
-    if args.training:
-
-        gen.train()
-        disc.train()
-        private_disc.train()
-
-        #pre-train private discriminator for disc_epochs. Use Y_train as labels
-        for epoch in range(args.disc_epochs):
-            for i, (imgs) in enumerate(dataloader):
-                imgs = imgs.to(device)
-                batch_size = imgs.shape[0]
-                lables = y_train[i*batch_size:(i+1)*batch_size]
-                lables = torch.tensor(lables).type(torch.LongTensor).to(device)
-
-                opt_private_disc.zero_grad()
-                output = private_disc(imgs).reshape(-1, args.N_splits)
-
-                loss = loss_fn(output, lables)
-                loss.backward()
-
-                opt_private_disc.step()
-
-            print("pre-train private discriminator loss: ", loss.item(), "epoch: ", epoch)
+        transform = transforms.Compose([
+                        transforms.Resize((args.image_size, args.image_size)),
+                        transforms.ToTensor(),
+                        transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
+                        ])
+        dataset = CustomDataset(root= os.path.join('data', args.data_name), transform=transform, n = args.num_images)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
 
-        train_privGAN(genS = [gen]*args.N_splits ,
+        ####################### SPLIT DATASET ############################
+        X = []
+        t = len(dataset)//args.N_splits
+        y_train = []
+        X_loaders = []
+
+        for i in range(args.N_splits):
+            if i<args.N_splits-1:
+                dataset_split = Subset(dataset, range(i*t, (i+1)*t))
+                X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
+                X += [dataset_split]
+                y_train += [i]*t
+            else:
+                dataset_split = Subset(dataset, range(i*t, len(dataset)))
+                X += [dataset_split]
+                X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
+                y_train += [i]*(len(dataset)-i*t)
+        y_train = np.array(y_train) + 0.0 
+        ###################################################################
+
+        ####################### DEFINE MODELS ############################
+        
+        gen = Generator(args.nz, args.nc, args.ngf).to(device)
+        disc = Discriminator(args.nc, args.ndf).to(device)
+        private_disc = PrivateDiscriminator(args.nc, args.ndf, args.N_splits).to(device)
+        initialize_weights(gen)
+        initialize_weights(disc)
+        initialize_weights(private_disc)
+
+        opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+        opt_disc = optim.Adam(disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+        opt_private_disc = optim.Adam(private_disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+        loss_fn = torch.nn.CrossEntropyLoss()
+        criterion = torch.nn.BCELoss()
+        ###################################################################
+
+        if args.training:
+
+            gen.train()
+            disc.train()
+            private_disc.train()
+
+            #### PRE-TRAIN PRIVATE DISCRIMINATOR ####
+            for epoch in range(args.disc_epochs):
+                for i, (imgs) in enumerate(dataloader):
+                    imgs = imgs.to(device)
+                    batch_size = imgs.shape[0]
+                    lables = y_train[i*batch_size:(i+1)*batch_size]
+                    lables = torch.tensor(lables).type(torch.LongTensor).to(device)
+
+                    opt_private_disc.zero_grad()
+                    output = private_disc(imgs).reshape(-1, args.N_splits)
+
+                    loss = loss_fn(output, lables)
+                    loss.backward()
+
+                    opt_private_disc.step()
+
+                print("pre-train private discriminator loss: ", loss.item(), "epoch: ", epoch)
+            ##########################################
+
+            train_privGAN(genS = [gen]*args.N_splits ,
                     discS = [disc]*args.N_splits, 
                     criterion = criterion,
                     opt_gen = opt_gen, 
@@ -226,17 +254,20 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             if args.wandb:
                 wandb.log({"D_loss": d_t.mean(), "DP_loss": dp_t.mean(), "G_loss": g_t.mean()})
 
-            if epoch % 10 == 0:
+            if epoch % 10 == 0 and args.wandb:
                 fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
                 fake_wb = genS[0](fixed_noise).detach().cpu()#shape (1, 3, 64, 64)
                 grid = torchvision.utils.make_grid(fake_wb[0], normalize=True)
-                if args.wandb:
-                    wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
-
+                wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
 
     #save the models
     if args.save_model:
-        dirname = os.path.join(args.PATH, timestamp)
+
+        if args.params_keys is None:
+            dirname = os.path.join(args.PATH, timestamp)
+        else:
+            dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
+
         os.makedirs(dirname, exist_ok=True)
         for i in range(args.N_splits):
             torch.save(genS[i].state_dict(), os.path.join(dirname, f"gen{i}.pth") )
@@ -252,7 +283,7 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             gen.load_state_dict(torch.load(os.path.join(dirname, "gen0.pth")))
         else:
             assert args.saved_model_name is not None, "Please specify the saved model name" 
-            assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
+            assert args.wandb == None, "No need to load anything to wandb when only generating synthetic data"
             gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
         
         gen.eval()
@@ -265,34 +296,45 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             fake = gen(noise).detach().cpu()
             fake = normalize(fake)
 
-            dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
-            os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, "dcgan_synthetic_data.npz"), fake=fake)
+            if args.params_keys is None:
+                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
+                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+            else:
+                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', args.params_keys, args.params_values) 
+                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', args.params_keys, args.params_values) 
+                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', args.params_keys, args.params_values)
 
-            dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
-            os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, "dcgan_noise.npz"), noise=noise.cpu())
+            os.makedirs(dirname_npz_images, exist_ok=True)
+            np.savez(os.path.join(dirname_npz_images, "dcgan_synthetic_data.npz"), fake=fake)
 
-            dirname = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
-            os.makedirs(dirname, exist_ok=True)
+            os.makedirs(dirname_npz_noise, exist_ok=True)
+            np.savez(os.path.join(dirname_npz_noise, "dcgan_noise.npz"), noise=noise.cpu())
+
+            os.makedirs(dirname_png_images, exist_ok=True)
             for i, img in enumerate(fake):
                 pil_img = to_pil(img)
-                save_path = os.path.join(dirname, f"image_{i}.png")
+                save_path = os.path.join(dirname_png_images, f"image_{i}.png")
                 pil_img.save(save_path)        
 
 
 def update_args(args, config_dict):
     for key, val in config_dict.items():
         setattr(args, key, val)  
+  
 
 
 if __name__ == '__main__':
 
-    #args.local_config = "gan_models/dcgan/dcgan_config.yaml"
     if args.local_config is not None:
+
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)
         update_args(args, config)
+
+        if not args.ailab:
+            import wandb #wandb is not supported on ailab server
+            
         if args.wandb:
             wandb_config = vars(args)
             run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
