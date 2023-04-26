@@ -83,7 +83,12 @@ def main():
         if len(experiments)>1:#if we are doing hyperparameter search
             exp = experiments[i]#take the i-th combination of hyperparameters
             update_args(args, exp)#update args with the hyperparameters
-            args.params_values = '-'.join([str(v) for v in exp.values()])#string of hyperparameters values    
+            args.params_values = '-'.join([str(v) for v in exp.values()])#string of hyperparameters values 
+
+        if args.wandb: 
+            wandb_config = vars(args)
+            wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config) 
+            
 
         print(args)
 
@@ -168,6 +173,9 @@ def main():
                     loss_fn = loss_fn,
                     X_loaders = X_loaders,
                     X = X)
+            
+            if args.wandb:
+                wandb.finish()
 
 
 def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn, X_loaders, X):
@@ -254,11 +262,6 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             if args.wandb:
                 wandb.log({"D_loss": d_t.mean(), "DP_loss": dp_t.mean(), "G_loss": g_t.mean()})
 
-            if epoch % 10 == 0 and args.wandb:
-                fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
-                fake_wb = genS[0](fixed_noise).detach().cpu()#shape (1, 3, 64, 64)
-                grid = torchvision.utils.make_grid(fake_wb[0], normalize=True)
-                wandb.log({"generated_images": wandb.Image(grid, caption="epoch: {}".format(epoch))})
 
     #save the models
     if args.save_model:
@@ -299,24 +302,15 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             if args.params_keys is None:
                 dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
                 dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
-                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
             else:
                 dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', args.params_keys, args.params_values) 
                 dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', args.params_keys, args.params_values) 
-                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', args.params_keys, args.params_values)
 
             os.makedirs(dirname_npz_images, exist_ok=True)
             np.savez(os.path.join(dirname_npz_images, "dcgan_synthetic_data.npz"), fake=fake)
 
             os.makedirs(dirname_npz_noise, exist_ok=True)
             np.savez(os.path.join(dirname_npz_noise, "dcgan_noise.npz"), noise=noise.cpu())
-
-            os.makedirs(dirname_png_images, exist_ok=True)
-            for i, img in enumerate(fake):
-                pil_img = to_pil(img)
-                save_path = os.path.join(dirname_png_images, f"image_{i}.png")
-                pil_img.save(save_path)        
-
 
 def update_args(args, config_dict):
     for key, val in config_dict.items():
@@ -333,11 +327,8 @@ if __name__ == '__main__':
         update_args(args, config)
 
         if not args.ailab:
-            import wandb #wandb is not supported on ailab server
+            import wandb #wandb is not supported on ailab server 
             
-        if args.wandb:
-            wandb_config = vars(args)
-            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
             # update_args(args, dict(run.config))
     else:
         warnings.warn("No config file was provided. Using default parameters.")

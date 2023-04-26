@@ -1,9 +1,7 @@
-
-num_epochs: 3
-disc_epochs: 2
-dp_delay: 1
+disc_epochs: 50
+dp_delay: 100
 ailab: False
 data_name: celebAhuge
 training: True
 generate: True
-num_images: 2
+wandb: privDCGAN-sweep
