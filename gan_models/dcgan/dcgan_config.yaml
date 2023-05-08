@@ -1,7 +1,8 @@
 disc_epochs: 50
 dp_delay: 100
+num_epochs: 300
 ailab: False
-data_name: celebAhuge
+data_path: data/celebAhuge_positive
 training: True
 generate: True
-wandb: privDCGAN-sweep
+batch_size: 16

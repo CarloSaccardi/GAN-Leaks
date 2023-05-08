@@ -13,13 +13,14 @@ Dockerfile
 */results
 *$results
 results*
-*/datasets
-*$datasets
-datasets*
+
+#ignore everthing inside data
 */data
 *$data
 data*
-*data
+data/*
+
+
 */model_save
 *$model_save
 model_save*
@@ -31,7 +32,7 @@ syn_data*c
 fbb_attack*
 */fbb_attack
 *$fbb_attack
-fbb_attack*
+*/fbb_attack/**
 *.conda
 
 

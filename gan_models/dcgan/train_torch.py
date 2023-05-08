@@ -11,7 +11,6 @@ import torchvision.transforms as transforms
 import torchvision.datasets as dset
 import numpy as np
 import numpy as np
-import wandb
 import yaml
 import warnings
 import datetime
@@ -34,10 +33,9 @@ parser.add_argument('--num_epochs', type=int, default=5, help='number of trainin
 parser.add_argument('--out_size', type=int, help='number of output images')
 parser.add_argument('--beta1', type=float, default=0.5 , help='beta1 for adam. default=0.5')
 parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for adam. default=0.999')
-parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
+parser.add_argument('--data_path', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument('--local_config', default=None, help='path to config file')
-parser.add_argument('--num_images', type=int, default=1000, help='number of images to use for training')
 
 parser.add_argument("--PATH", type=str, default=os.path.join(os.getcwd(), 'ersecki-thesis','model_save', 'dcgan'), help="Directory to save model")
 parser.add_argument("--PATH_syn_data", type=str, default=os.path.join(os.getcwd(), 'ersecki-thesis', 'syn_data', 'dcgan'), help="Directory to save synthetic data")
@@ -56,7 +54,6 @@ args = parser.parse_args()
 
 def main():
 
-    #TODO: add seed for reproducibility and initialization of weights
     print(args)
 
     transform = transforms.Compose([
@@ -64,9 +61,9 @@ def main():
                     transforms.ToTensor(),
                     transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
                     ])
-    dataset = CustomDataset(root= os.path.join('data', args.data_name), transform=transform, n = args.num_images)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-
+    
+    datasetPositive = CustomDataset(root= args.data_path, transform=transform)
+    dataloader = torch.utils.data.DataLoader(datasetPositive, batch_size=args.batch_size, shuffle=True)
 
     fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)    
     
@@ -93,7 +90,8 @@ def main():
             for batch_idx, (real) in enumerate(dataloader):
                 
                 real = real.to(device)
-                noise = torch.randn(args.batch_size, args.nz, 1, 1).to(device)
+                batch_size = real.shape[0]
+                noise = torch.randn(batch_size, args.nz, 1, 1).to(device)
                 fake = gen(noise)
 
                 # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
@@ -130,13 +128,11 @@ def main():
 
             #save model parameters
         if args.save_model:
-            if args.params_keys is None:
-                dirname = os.path.join(args.PATH, timestamp)
-            else:
-                dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
-                os.makedirs(dirname, exist_ok=True)
-                torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
-                torch.save(disc.state_dict(), os.path.join(dirname, "discriminator.pth"))
+            
+            dirname = os.path.join(args.PATH, timestamp)
+            os.makedirs(dirname, exist_ok=True)
+            torch.save(gen.state_dict(), os.path.join(dirname, "generator.pth"))
+            torch.save(disc.state_dict(), os.path.join(dirname, "discriminator.pth"))
 
     if args.generate:
         #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
@@ -160,14 +156,9 @@ def main():
             fake = gen(noise).detach().cpu()
             fake = normalize(fake)
 
-            if args.params_keys is None:
-                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
-                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
-                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
-            else:
-                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', args.params_keys, args.params_values) 
-                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', args.params_keys, args.params_values) 
-                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', args.params_keys, args.params_values)
+            dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
+            dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+            dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
 
             os.makedirs(dirname_npz_images, exist_ok=True)
             np.savez(os.path.join(dirname_npz_images, "dcgan_synthetic_data.npz"), fake=fake)
@@ -197,32 +188,10 @@ if __name__ == '__main__':
         update_args(args, config)
 
         if not args.ailab:
-            import wandb #wandb is not supported on ailab server
+            import wandb #wandb is not supported on ailab server 
             
-        if args.wandb:
-            wandb_config = vars(args)
-            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
             # update_args(args, dict(run.config))
     else:
         warnings.warn("No config file was provided. Using default parameters.")
 
-    if args.hyperparameter_search is not None:
-        #Do sweep with hyperparameters in config file
-        with open(str(args.hyperparameter_search), "r") as f:
-            config = yaml.safe_load(f)
-        update_args(args, config)
-        
-        #make a list of possible combinations for hyperparameters
-        keys, values = zip(*config.items())
-        experiments = [dict(zip(keys, v)) for v in itertools.product(*values)]
-        args.params_keys = '-'.join(keys)
-
-        for exp in experiments:
-            update_args(args, exp)
-            args.params_values = '-'.join([str(v) for v in exp.values()])
-            main()
-
-    else:
-        args.params_values: None
-        args.params_keys: None
-        main()
+    main()

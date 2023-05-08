@@ -1,4 +1,3 @@
-num_epochs: [300, 500]
 num_images: [1000, 10000, 20000]
 N_splits: [2, 5, 10] #Number of Gen_disc pairs
 privacy_ratio: [0.1, 1, 10]
