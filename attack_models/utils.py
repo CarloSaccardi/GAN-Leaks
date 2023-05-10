@@ -53,7 +53,7 @@ def get_filepaths_from_dir(data_dir, ext):
     return sorted(path_list)
 
 
-def read_image(filepath, resolution=64, cx=89, cy=121):
+def read_image(filepath, resolution=64):
     '''
     read,crop and scale an image given the path
     :param filepath:  the path of the image file
@@ -62,7 +62,7 @@ def read_image(filepath, resolution=64, cx=89, cy=121):
     :param cy: y_coordinate of the crop center
     :return:
         image in range [-1,1] with shape (resolution,resolution,3)
-    '''
+    
 
     img = np.asarray(PIL.Image.open(filepath))
     shape = img.shape
@@ -75,6 +75,14 @@ def read_image(filepath, resolution=64, cx=89, cy=121):
 
     img = img.astype(np.float32) / 255.
     img = img * 2 - 1.
+    '''
+    transform = transforms.Compose([
+        transforms.ToTensor()
+    ])
+
+    img = transform(PIL.Image.open(filepath))
+    img = img.numpy()
+
     return img
 
 

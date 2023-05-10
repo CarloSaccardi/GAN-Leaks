@@ -120,7 +120,6 @@ def update_args(args, config_dict):
 if __name__ == '__main__':
 
     args = parse_arguments()
-    args.local_config = 'attack_models\\attack_eval.yaml'
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)
