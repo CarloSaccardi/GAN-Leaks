@@ -1,5 +1,5 @@
-data_name: celebAhuge
+data_path: data/celebAhuge_positive
 training: False
 generate: True
-resume: False
-saved_model_name: "model_save/pggan/_2023_04_17__18_23_41"
+num_generated: 512
+saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_11__11_17_23

@@ -6,10 +6,10 @@ import PIL.Image as Image
 
 
 class CustomDataset(Dataset):
-    def __init__(self, root, transform=None, n=None):
+    def __init__(self, root, transform=None):
         self.root = root
         self.transform = transform
-        self.img_list = os.listdir(root)[:n] if n is not None else os.listdir(root)
+        self.img_list = os.listdir(root)
 
     def __len__(self):
         return len(self.img_list)

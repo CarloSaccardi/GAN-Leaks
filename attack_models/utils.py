@@ -4,7 +4,6 @@ import fnmatch
 import PIL.Image
 import matplotlib
 import torchvision.transforms as transforms
-import cv2
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -54,34 +53,20 @@ def get_filepaths_from_dir(data_dir, ext):
 
 
 def read_image(filepath, resolution=64):
-    '''
-    read,crop and scale an image given the path
-    :param filepath:  the path of the image file
-    :param resolution: desired size of the output image
-    :param cx: x_coordinate of the crop center
-    :param cy: y_coordinate of the crop center
-    :return:
-        image in range [-1,1] with shape (resolution,resolution,3)
-    
 
-    img = np.asarray(PIL.Image.open(filepath))
-    shape = img.shape
+  
+    shape = np.asanyarray(PIL.Image.open(filepath)).shape
 
     if shape == (resolution, resolution, 3):
-        pass
+        img = np.array(PIL.Image.open(filepath))
+
     else:
-        img = cv2.resize(img, (64, 64), interpolation=cv2.INTER_CUBIC)
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Resize((resolution, resolution))
+        ])
+        img = np.array(transform(PIL.Image.open(filepath).convert('RGB')))
 
-
-    img = img.astype(np.float32) / 255.
-    img = img * 2 - 1.
-    '''
-    transform = transforms.Compose([
-        transforms.ToTensor()
-    ])
-
-    img = transform(PIL.Image.open(filepath))
-    img = img.numpy()
 
     return img
 

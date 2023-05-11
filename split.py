@@ -6,7 +6,7 @@ import warnings
 
 # Parse command line arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_images', type=float, default=1000,
+parser.add_argument('--num_images', type=float, default=1024,
                     help='the number of images to move to the two directories')
 parser.add_argument('--input_dir', type=str, default='data/celebAhuge',
                     help='the path to the input directory')
