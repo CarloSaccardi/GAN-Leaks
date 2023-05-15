@@ -62,10 +62,9 @@ def read_image(filepath, resolution=64):
 
     else:
         transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize((resolution, resolution))
+            transforms.Resize((resolution, resolution)),
         ])
-        img = np.array(transform(PIL.Image.open(filepath).convert('RGB')))
+        img = np.array(transform(PIL.Image.open(filepath)))
 
 
     return img

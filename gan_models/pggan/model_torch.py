@@ -7,9 +7,9 @@ factors = [1, 1, 1, 1, 1/2, 1/4, 1/8, 1/16, 1/32]
 
 class WSConv2d(nn.Module):   #weight scaled conv layer, EQULIZED LEARNING RATE
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, gain=2): #gain is for the initialization constant
-        super().__init__()
+        super(WSConv2d, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
-        self.scale = (gain / (in_channels * kernel_size ** 2)) ** 0.5 
+        self.scale = (gain / (in_channels * (kernel_size ** 2))) ** 0.5 
         self.bias = self.conv.bias 
         self.conv.bias = None #remove the bias from the conv layer cause it won't be scaled
         
@@ -24,7 +24,7 @@ class WSConv2d(nn.Module):   #weight scaled conv layer, EQULIZED LEARNING RATE
 
 class PixelNorm(nn.Module):#pixel normalization layer across the channels
     def __init__(self):
-        super().__init__()
+        super(PixelNorm, self).__init__()
         self.eps = 1e-8
         
     def forward(self, x):
@@ -32,27 +32,23 @@ class PixelNorm(nn.Module):#pixel normalization layer across the channels
 
 class ConvBlock(nn.Module): # 3x3 conv block with pixel norm and leaky relu
     def __init__(self, in_channels, out_channels, use_pixel_norm=True):
-        super().__init__()
+        super(ConvBlock, self).__init__()
+        self.use_pn = use_pixel_norm
         self.conv1 = WSConv2d(in_channels, out_channels)
         self.conv2 = WSConv2d(out_channels, out_channels)
         self.leaky = nn.LeakyReLU(0.2)
         self.pn = PixelNorm()
-        self.use_pn = use_pixel_norm
         
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.leaky(x)
+        x = self.leaky(self.conv1(x))
         x = self.pn(x) if self.use_pn else x
-        
-        x = self.conv2(x)
-        x = self.leaky(x)
+        x = self.leaky(self.conv2(x))
         x = self.pn(x) if self.use_pn else x
-        
         return x
         
 class Generator(nn.Module):
     def __init__(self, z_dim, in_channels, img_channels=3):
-        super().__init__()
+        super(Generator, self).__init__()
         self.initial = nn.Sequential(
             PixelNorm(),
             nn.ConvTranspose2d(z_dim, in_channels, 4, 1, 0),# 1x1 conv transpose to 4x4
@@ -62,9 +58,9 @@ class Generator(nn.Module):
             PixelNorm(),
         )
         
-        self.initial_rgb = nn.Conv2d(in_channels, img_channels, kernel_size=1, stride=1, padding=0)
+        self.initial_rgb =  WSConv2d(in_channels, img_channels, kernel_size=1, stride=1, padding=0)
         
-        self.prog_blocks, self.rgb_layers = nn.ModuleList(), nn.ModuleList([self.initial_rgb])
+        self.prog_blocks, self.rgb_layers = (nn.ModuleList([]), nn.ModuleList([self.initial_rgb]))
         
         for i in range(len(factors) - 1):
             conv_in_channels = int(in_channels * factors[i])
@@ -94,8 +90,8 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self, in_channels, img_channels=3):
-        super().__init__()
-        self.prog_blocks, self.rgb_layers = nn.ModuleList(), nn.ModuleList()
+        super(Discriminator, self).__init__()
+        self.prog_blocks, self.rgb_layers = nn.ModuleList([]), nn.ModuleList([])
         self.leaky = nn.LeakyReLU(0.2)
         
         for i in range(len(factors) - 1, 0, -1):
@@ -111,11 +107,11 @@ class Discriminator(nn.Module):
         
         #block for the 4x4 resolution
         self.final_block = nn.Sequential(
-            WSConv2d(in_channels+1, in_channels, kernel_size=3, stride=1, padding=1),
+            WSConv2d(in_channels+1, in_channels, kernel_size=3, padding=1),
             nn.LeakyReLU(0.2),
-            WSConv2d(in_channels, in_channels, kernel_size=4, stride=1, padding=0),
+            WSConv2d(in_channels, in_channels, kernel_size=4, padding=0, stride=1),
             nn.LeakyReLU(0.2),
-            WSConv2d(in_channels, 1, kernel_size=1, stride=1, padding=0),
+            WSConv2d(in_channels, 1, kernel_size=1, padding=0,  stride=1),
         )
         
         
@@ -133,7 +129,7 @@ class Discriminator(nn.Module):
         
         if steps == 0:
             out = self.minibatch_std(out)
-            return self.final_block(out).view(x.shape[0], -1)
+            return self.final_block(out).view(out.shape[0], -1)
         
         
         downscaled = self.leaky(self.rgb_layers[cur_step + 1](self.avg_pool(x)))

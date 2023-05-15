@@ -14,19 +14,20 @@ import os
 import warnings
 import yaml
 import datetime
+import math
 
 from model_torch import Generator, Discriminator
 from utils import gradient_penalty, CustomDataset
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_epochs', type=int, default=20, help='number of training epochs for each resolution')
+parser.add_argument('--num_epochs', type=int, default=30, help='number of training epochs for each resolution')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--batch_size', type=list, default=[16, 16, 16, 16, 16], help='batch size for each resolution')
 parser.add_argument('--image_size', type=int, default=64, help='the height / width of the input image to network, default=64')
 parser.add_argument('--nc', type=int, default=3, help='number of color channels in the input image, default=3')
-parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector, default=100')
-parser.add_argument('--in_channels', type=int, default=512, help='number of generator filters in first conv layer, default=256')
+parser.add_argument('--nz', type=int, default=256, help='size of the latent z vector, default=100')
+parser.add_argument('--in_channels', type=int, default=256, help='number of generator filters in first conv layer, default=256')
 parser.add_argument('--start_img_size', type=int, default=4, help='starting image size, default=4')
 parser.add_argument('--num_generated', type=int, default=10000, help='number of generated images')
 parser.add_argument('--lambda_gp', type=float, default=10, help='lambda for gradient penalty')
@@ -50,18 +51,38 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True #improves the speed of the model
 
-args = parser.parse_args()
-if not args.ailab:
-    import wandb #wandb is not supported on ailab server
+args = parser.parse_args()    
+
+def update_args(args, config_dict):
+    for key, val in config_dict.items():
+        setattr(args, key, val)  
+
+args.local_config = 'gan_models/pggan/pggan_config.yaml'
+if args.local_config is not None:
+    with open(str(args.local_config), "r") as f:
+        config = yaml.safe_load(f)
+    update_args(args, config)
+
+    if not args.ailab:
+        import wandb #wandb is not supported on ailab server
+
+    if args.wandb:
+        wandb_config = vars(args)
+        run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
+        # update_args(args, dict(run.config))
+else:
+    warnings.warn("No config file was provided. Using default parameters.")
 
 PROGRESSIVE_EPOCHS = [args.num_epochs]*len(args.batch_size)
+print(args)
 
 def get_loader(imge_size):
     transform = transforms.Compose([
         transforms.Resize((imge_size,imge_size)),
         transforms.ToTensor(),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.Normalize([0.5]*args.nc, [0.5]*args.nc)
+        transforms.Normalize([0.5 for _ in range(args.nc)], 
+                             [0.5 for _ in range(args.nc)])
     ])
     
     batch_size = args.batch_size[int(log2(imge_size) / 4)]
@@ -90,11 +111,11 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
             loss_critic = (
                 -(torch.mean(critic_real) - torch.mean(critic_fake)) 
                 + args.lambda_gp * gp
-                + 0.001 * torch.mean(critic_real ** 2)
+                + (0.001 * torch.mean(critic_real ** 2))
                )
              
         opt_critic.zero_grad()
-        scaler_critic.scale(loss_critic).backward(retain_graph=True) #retain_graph=True to be able to backprop the generator
+        scaler_critic.scale(loss_critic).backward() #retain_graph=True to be able to backprop the generator
         scaler_critic.step(opt_critic)
         scaler_critic.update()
          
@@ -108,8 +129,13 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
         scaler_gen.step(opt_gen)
         scaler_gen.update()
         
-        alpha += cur_batch_size / (len(loader.dataset) * PROGRESSIVE_EPOCHS[step] * 0.5)
+        alpha += cur_batch_size / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(loader.dataset)) 
         alpha = min(alpha, 1)
+
+        loop.set_postfix(
+            gp=gp.item(),
+            loss_critic=loss_critic.item(),
+        )
         
     return loss_critic, loss_gen, alpha
         
@@ -120,8 +146,6 @@ def main():
 
     now = datetime.datetime.now() # To create a unique folder for each run
     timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
-
-    print(args)
 
     if args.training:
 
@@ -192,46 +216,42 @@ def main():
         gen.eval()
 
         with torch.no_grad():
-            noise = torch.randn(args.num_generated, args.nz, 1, 1, device=device)
-            normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
-            to_pil = transforms.ToPILImage()
+            batch_size = 32  # Specify the batch size for generating images
 
-            fake = gen(noise, 4, 1).detach().cpu()
-            fake = normalize(fake)
+            num_batches = math.ceil(args.num_generated / batch_size)
+            #create empty tensor for noise and fake images
+            noise = torch.empty((args.num_generated, args.nz, 1, 1), device=device)
+            fake = torch.empty((args.num_generated, args.nc, args.image_size, args.image_size), device=device)
 
-            dirname = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
+            for batch_idx in range(num_batches):
+                batch_start = batch_idx * batch_size
+                batch_end = min(batch_start + batch_size, args.num_generated)
+
+                batch_noise = torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
+                #normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
+                to_pil = transforms.ToPILImage()
+
+                batch_fake = gen(batch_noise, 4, 1).detach().cpu() * 0.5 + 0.5
+                #batch_fake = normalize(batch_fake)
+               
+                noise[batch_start:batch_end] = batch_noise
+                fake[batch_start:batch_end] = batch_fake
+
+                dirname = os.path.join(args.PATH_syn_data, 'jpg_images', timestamp)
+                os.makedirs(dirname, exist_ok=True)
+                for i, img in enumerate(batch_fake):
+                    pil_img = to_pil(img)
+                    save_path = os.path.join(dirname, f"image_{batch_start + i}.jpg")
+                    pil_img.save(save_path)
+
+            dirname = os.path.join(args.PATH_syn_data, 'npz_images', timestamp)
+            os.makedirs(dirname, exist_ok=True) 
+            np.savez(os.path.join(dirname, f"pggan_images.npz"), fake=fake.cpu())
+
+            dirname = os.path.join(args.PATH_syn_data, 'npz_noise', timestamp)
             os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, "pggan_synthetic_data.npz"), fake=fake)
-
-            dirname = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
-            os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, "pggan_noise.npz"), noise=noise.cpu())
-
-            dirname = os.path.join(args.PATH_syn_data , 'jpg_images', '_2023_05_11__12_31_02')
-            os.makedirs(dirname, exist_ok=True)
-            for i, img in enumerate(fake):
-                pil_img = to_pil(img)
-                save_path = os.path.join(dirname, f"image_{512+i}.jpg")
-                pil_img.save(save_path)
-
-
-
-def update_args(args, config_dict):
-    for key, val in config_dict.items():
-        setattr(args, key, val)  
+            np.savez(os.path.join(dirname, f"pggan_noise.npz"), noise=noise.cpu())
 
 
 if __name__ == '__main__':
-
-    if args.local_config is not None:
-        with open(str(args.local_config), "r") as f:
-            config = yaml.safe_load(f)
-        update_args(args, config)
-        if args.wandb:
-            wandb_config = vars(args)
-            run = wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config)
-            # update_args(args, dict(run.config))
-    else:
-        warnings.warn("No config file was provided. Using default parameters.")
-
     main()
