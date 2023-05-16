@@ -52,21 +52,28 @@ def get_filepaths_from_dir(data_dir, ext):
     return sorted(path_list)
 
 
-def read_image(filepath, resolution=64):
+def read_image(filepath, resolution=64, cx=89, cy=121):
+    '''
+    read,crop and scale an image given the path
+    :param filepath:  the path of the image file
+    :param resolution: desired size of the output image
+    :param cx: x_coordinate of the crop center
+    :param cy: y_coordinate of the crop center
+    :return:
+        image in range [-1,1] with shape (resolution,resolution,3)
+    '''
 
-  
-    shape = np.asanyarray(PIL.Image.open(filepath)).shape
+    img = np.asarray(PIL.Image.open(filepath))
+    shape = img.shape
 
     if shape == (resolution, resolution, 3):
-        img = np.array(PIL.Image.open(filepath))
-
+        pass
     else:
-        transform = transforms.Compose([
-            transforms.Resize((resolution, resolution)),
-        ])
-        img = np.array(transform(PIL.Image.open(filepath)))
-
-
+        img = img[cy - 64: cy + 64, cx - 64: cx + 64]
+        #reshape the image to the desired size
+        img = PIL.Image.fromarray(img)
+        img = img.resize((resolution, resolution), PIL.Image.BILINEAR)
+        img = np.asarray(img)
     return img
 
 
