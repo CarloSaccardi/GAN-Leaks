@@ -15,6 +15,7 @@ import warnings
 import yaml
 import datetime
 import math
+from PIL import Image
 
 from model_torch import Generator, Discriminator
 from utils import gradient_penalty, CustomDataset
@@ -78,7 +79,7 @@ print(args)
 
 def get_loader(imge_size):
     transform = transforms.Compose([
-        transforms.Resize((imge_size,imge_size)),
+        transforms.Resize(size=(imge_size,imge_size), interpolation=Image.NEAREST),
         transforms.ToTensor(),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.Normalize([0.5 for _ in range(args.nc)], 

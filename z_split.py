@@ -4,18 +4,22 @@ import argparse
 import yaml
 import warnings
 import PIL.Image
-import torch
-import torchvision
+import random
+import numpy as np
 # Parse command line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_images', type=float, default=20000,
                     help='the number of images to move to the two directories')
-parser.add_argument('--input_dir', type=str, default='data/celebA_aligned',
+parser.add_argument('--identity_annotations', type=str, default='data/identities_ann.txt',
+                    help='the path to the identity annotations file')
+parser.add_argument('--input_dir', type=str, default='data/img_align_celeba',
                     help='the path to the input directory')
 parser.add_argument('--output_dir1', type=str, default='data/celebAhuge_positive',
                     help='the path to the first output directory')
 parser.add_argument('--output_dir2', type=str, default='data/celebAhuge_negative',
                     help='the path to the second output directory')
+parser.add_argument('--output_dir3', type=str, default='data/celebAhuge_positive_64',
+                    help='the path to the first output directory')
 parser.add_argument('--img_size', type=int, default=64, 
                     help='the height / width of the input image to network')
 parser.add_argument('--local_config', default=None, help='path to config file')
@@ -23,43 +27,69 @@ parser.add_argument('--local_config', default=None, help='path to config file')
 args = parser.parse_args()
 
 def main():
-    #download celeba with torchviosn 
-    
-    # Get list of image file names in the input directory
-    img_list = os.listdir(args.input_dir)
 
-    # Calculate the split index
+    #Read the identity annotations file
+    diz = {}
+    with open(args.identity_annotations) as f:
+        for line in f:
+            identity, annotation = line.strip().split()
+            diz.setdefault(annotation, []).append(identity)
 
 
-    # Split the list into two parts
-    img_list1 = img_list[:args.num_images]
-    img_list2 = img_list[args.num_images:args.num_images * 2]
+    identities = list(diz.keys())
+    random.shuffle(identities)
+    private_identities = identities[:len(identities)//2]
+    public_identities = identities[len(identities)//2:]
+    private_images = []
+    public_images = []
+    for identity in private_identities:
+        if len(private_images) < args.num_images:
+            if ( args.num_images-len(private_images) ) > len(diz[identity]):
+                private_images += diz[identity]
+            else:
+                private_images += diz[identity][:args.num_images-len(private_images)]
+        else:
+            break
 
-    assert any(img in img_list1 for img in img_list2) == False, 'The two lists are not disjoint!'
+    for identity in public_identities:
+        if len(public_images) < args.num_images:
+            if ( args.num_images-len(public_images) ) > len(diz[identity]):
+                public_images += diz[identity]
+            else:
+                public_images += diz[identity][:args.num_images-len(public_images)]
+        else:
+            break
+
+    assert any(img in private_images for img in public_images) == False, 'The two lists are not disjoint!'
+    assert any(ann in private_identities for ann in public_identities) == False, 'The two lists are not disjoint!'
 
     # Create output directories
-    #if os.path.exists(args.output_dir1) then delete every file in it
-
     if os.path.exists(args.output_dir1):
         shutil.rmtree(args.output_dir1)
 
     if os.path.exists(args.output_dir2):
-        shutil.rmtree(args.output_dir2)    
+        shutil.rmtree(args.output_dir2) 
+
+    if os.path.exists(args.output_dir3):
+        shutil.rmtree(args.output_dir3)   
 
     os.makedirs(args.output_dir1, exist_ok=True)
     os.makedirs(args.output_dir2, exist_ok=True)
+    os.makedirs(args.output_dir3, exist_ok=True)
 
     # Move the first part of images to output_dir1
-    for img in img_list1:
+    for img in private_images:
         src_path = os.path.join(args.input_dir, img)
         dst_path = os.path.join(args.output_dir1, img)
-        resize_image(src_path, dst_path)
+        dst_path_64 = os.path.join(args.output_dir3, img)
+        center_crop(src_path, dst_path)
+        resize_image(dst_path, dst_path_64)
 
     # Move the second part of images to output_dir2
-    for img in img_list2:
+    for img in public_images:
         src_path = os.path.join(args.input_dir, img)
         dst_path = os.path.join(args.output_dir2, img)
-        resize_image(src_path, dst_path)
+        center_crop(src_path, dst_path)
 
 
 
@@ -72,11 +102,13 @@ def resize_image(src_path, dst_path):
     img = img.resize((args.img_size, args.img_size))
     img.save(dst_path)
 
-#align images to each other based on facial landmarks
-def align_images():
-    pass
+
+def center_crop(src_path, dst_path, cx=89, cy=121):
+    img = np.asarray(PIL.Image.open(src_path))
+    assert img.shape == (218, 178, 3)
+    img = img[cy - 64: cy + 64, cx - 64: cx + 64]
+    PIL.Image.fromarray(img).save(dst_path)
     
-  
 
 
 if __name__ == '__main__':
