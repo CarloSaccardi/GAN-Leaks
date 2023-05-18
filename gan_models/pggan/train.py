@@ -58,7 +58,6 @@ def update_args(args, config_dict):
     for key, val in config_dict.items():
         setattr(args, key, val)  
 
-args.local_config = 'gan_models/pggan/pggan_config.yaml'
 if args.local_config is not None:
     with open(str(args.local_config), "r") as f:
         config = yaml.safe_load(f)
@@ -238,11 +237,11 @@ def main():
                 noise[batch_start:batch_end] = batch_noise
                 fake[batch_start:batch_end] = batch_fake
 
-                dirname = os.path.join(args.PATH_syn_data, 'jpg_images', timestamp)
+                dirname = os.path.join(args.PATH_syn_data, 'png_images', timestamp)
                 os.makedirs(dirname, exist_ok=True)
                 for i, img in enumerate(batch_fake):
                     pil_img = to_pil(img)
-                    save_path = os.path.join(dirname, f"image_{batch_start + i}.jpg")
+                    save_path = os.path.join(dirname, f"image_{batch_start + i}.png")
                     pil_img.save(save_path)
 
             dirname = os.path.join(args.PATH_syn_data, 'npz_images', timestamp)

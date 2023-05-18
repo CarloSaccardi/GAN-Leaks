@@ -97,15 +97,15 @@ def main(args_):
     resolution = args.resolution
 
     ### load generated samples
-    syn_data_paths = get_filepaths_from_dir(args.syn_data_path, ext='jpg')
+    syn_data_paths = get_filepaths_from_dir(args.syn_data_path, ext='png')
     syn_imgs = np.array([read_image(f, resolution) for f in syn_data_paths])
     gen_feature = np.reshape(syn_imgs, [len(syn_imgs), -1])
 
     ### load query images
-    pos_data_paths = get_filepaths_from_dir(args.pos_data_dir, ext='jpg')
+    pos_data_paths = get_filepaths_from_dir(args.pos_data_dir, ext='png')
     pos_query_imgs = np.array([read_image(f, resolution) for f in pos_data_paths])
 
-    neg_data_paths = get_filepaths_from_dir(args.neg_data_dir, ext='jpg')
+    neg_data_paths = get_filepaths_from_dir(args.neg_data_dir, ext='png')
     neg_query_imgs = np.array([read_image(f, resolution) for f in neg_data_paths])
 
     ### nearest neighbor search

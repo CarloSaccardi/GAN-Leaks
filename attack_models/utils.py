@@ -69,10 +69,9 @@ def read_image(filepath, resolution=64, cx=89, cy=121):
     if shape == (resolution, resolution, 3):
         pass
     else:
-        img = img[cy - 64: cy + 64, cx - 64: cx + 64]
         #reshape the image to the desired size
         img = PIL.Image.fromarray(img)
-        img = img.resize((resolution, resolution), PIL.Image.BILINEAR)
+        img = img.resize((resolution, resolution))
         img = np.asarray(img)
     return img
 

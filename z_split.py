@@ -8,7 +8,7 @@ import random
 import numpy as np
 # Parse command line arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_images', type=float, default=20000,
+parser.add_argument('--num_images', type=float, default=1024,
                     help='the number of images to move to the two directories')
 parser.add_argument('--identity_annotations', type=str, default='data/identities_ann.txt',
                     help='the path to the identity annotations file')
@@ -79,16 +79,18 @@ def main():
 
     # Move the first part of images to output_dir1
     for img in private_images:
+        img_id = img.split('.')[0]
         src_path = os.path.join(args.input_dir, img)
-        dst_path = os.path.join(args.output_dir1, img)
-        dst_path_64 = os.path.join(args.output_dir3, img)
+        dst_path = os.path.join(args.output_dir1, img_id + '.png')
+        dst_path_64 = os.path.join(args.output_dir3, img_id + '.png')
         center_crop(src_path, dst_path)
         resize_image(dst_path, dst_path_64)
 
     # Move the second part of images to output_dir2
     for img in public_images:
+        img_id = img.split('.')[0]
         src_path = os.path.join(args.input_dir, img)
-        dst_path = os.path.join(args.output_dir2, img)
+        dst_path = os.path.join(args.output_dir2, img_id + '.png')
         center_crop(src_path, dst_path)
 
 
