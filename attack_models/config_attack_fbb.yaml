@@ -1,11 +1,11 @@
 ############ ATTACK ##########
-exp_name: progan_debug_1
-syn_data_path: ersecki-thesis/syn_data/dcgan/png_images/_2023_05_18__17_20_40
+exp_name: progan_debug_0
+syn_data_path: data/celebAhuge_positive_64
 pos_data_dir: data/celebAhuge_positive
 neg_data_dir: data/celebAhuge_negative
 data_num: 1024
 K: 1
-BATCH_SIZE: 1
+BATCH_SIZE: 32
 
 
 ############ METRICS #########s

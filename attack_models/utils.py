@@ -4,6 +4,11 @@ import fnmatch
 import PIL.Image
 import matplotlib
 import torchvision.transforms as transforms
+import sys
+import torch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lpips_pytorch'))
+import lpips_pytorch as ps
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -73,6 +78,37 @@ def read_image(filepath, resolution=64, cx=89, cy=121):
         img = PIL.Image.fromarray(img)
         img = img.resize((resolution, resolution))
         img = np.asarray(img)
+
+    img = 2. * (img / 255.) - 1.
+
+    return img
+
+
+def read_image_norm(filepath, resolution=64, cx=89, cy=121):
+    '''
+    read,crop and scale an image given the path
+    :param filepath:  the path of the image file
+    :param resolution: desired size of the output image
+    :param cx: x_coordinate of the crop center
+    :param cy: y_coordinate of the crop center
+    :return:
+        image in range [-1,1] with shape (resolution,resolution,3)
+    '''
+
+    img = np.asarray(PIL.Image.open(filepath))
+    shape = img.shape
+
+    if shape == (resolution, resolution, 3):
+        pass
+    else:
+        #reshape the image to the desired size
+        img = PIL.Image.fromarray(img)
+        img = img.resize((resolution, resolution))
+        img = np.asarray(img)
+    
+    #normilize the image to be in range [-1,1]
+    img = 2. * (img / 255.) - 1.
+        
     return img
 
 
@@ -138,3 +174,37 @@ def visualize_samples(img_r01, save_dir):
         plt.axis('off')
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, 'samples.png'))
+
+### Hyperparameters
+LAMBDA2 = 0.2
+LAMBDA3 = 0.0001
+RANDOM_SEED = 1000
+
+
+
+
+class Loss(torch.nn.Module):
+    def __init__(self, distance, if_norm_reg=False):
+        super(Loss, self).__init__()
+        self.distance = distance
+        self.lpips_model = ps.PerceptualLoss()
+        self.if_norm_reg = if_norm_reg
+
+        ### loss
+        if distance == 'l2':
+            print('Use distance: l2')
+            self.loss_l2_fn = lambda x, y: torch.mean((y - x) ** 2, dim=[1, 2, 3])
+            self.loss_lpips_fn = lambda x, y: 0.
+
+        elif distance == 'l2-lpips':
+            print('Use distance: lpips + l2')
+            self.loss_lpips_fn = lambda x, y: self.lpips_model.forward(x, y, normalize=False).view(-1)
+            self.loss_l2_fn = lambda x, y: torch.mean((y - x) ** 2, dim=[1, 2, 3])
+
+    def forward(self, x_hat, x_gt):
+        x_gt = torch.from_numpy(x_gt).float().reshape(1, 3, 64, 64).cuda()
+        x_hat = torch.from_numpy(x_hat).float().reshape(1, 3, 64, 64).cuda()
+        self.loss_lpips = self.loss_lpips_fn(x_hat, x_gt)
+        self.loss_l2 = self.loss_l2_fn(x_hat, x_gt)
+        self.vec_loss = LAMBDA2 * self.loss_lpips +  self.loss_l2
+        return self.vec_loss

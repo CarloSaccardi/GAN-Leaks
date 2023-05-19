@@ -60,8 +60,8 @@ def main():
     save_dir = args.save_dir
 
     if attack_type == 'fbb':
-        pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy'))[:, 0]
-        neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy'))[:, 0]
+        pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy'))#[:, 0]
+        neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy'))#[:, 0]
     else:
         pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy')).flatten()
         neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy')).flatten()
@@ -120,6 +120,7 @@ def update_args(args, config_dict):
 if __name__ == '__main__':
 
     args = parse_arguments()
+    args.local_config = 'attack_models/attack_eval.yaml'
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)
