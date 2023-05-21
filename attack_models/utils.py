@@ -84,34 +84,6 @@ def read_image(filepath, resolution=64, cx=89, cy=121):
     return img
 
 
-def read_image_norm(filepath, resolution=64, cx=89, cy=121):
-    '''
-    read,crop and scale an image given the path
-    :param filepath:  the path of the image file
-    :param resolution: desired size of the output image
-    :param cx: x_coordinate of the crop center
-    :param cy: y_coordinate of the crop center
-    :return:
-        image in range [-1,1] with shape (resolution,resolution,3)
-    '''
-
-    img = np.asarray(PIL.Image.open(filepath))
-    shape = img.shape
-
-    if shape == (resolution, resolution, 3):
-        pass
-    else:
-        #reshape the image to the desired size
-        img = PIL.Image.fromarray(img)
-        img = img.resize((resolution, resolution))
-        img = np.asarray(img)
-    
-    #normilize the image to be in range [-1,1]
-    img = 2. * (img / 255.) - 1.
-        
-    return img
-
-
 ####################################################
 ## visualize
 ####################################################

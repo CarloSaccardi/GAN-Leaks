@@ -86,7 +86,7 @@ def find_knn(nn_obj, query_imgs, args):
         idx = np.array(idx)
     return dist, idx
 
-def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, num=20):
+def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, class_type, num=20):
     '''
     plot the closest images
     :param idx: index of the KNNs
@@ -100,13 +100,8 @@ def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, num=20):
         query_img = query_imgs[i]
         syn_img = syn_imgs[idx[i][0]]
         img = np.concatenate((query_img, syn_img), axis=1)
-        for j in range(1, num):
-            syn_img = syn_imgs[idx[i][j]]
-            img = np.concatenate((img, syn_img), axis=1)
-        img = np.concatenate(img, axis=0)
-        img = (img + 1) / 2
-        img = np.clip(img, 0, 1)
-        PIL.Image.fromarray(np.uint8(img * 255)).save(os.path.join(save_dir, str(i) + '.png'))
+        img = (img + 1.) / 2.
+        PIL.Image.fromarray(np.uint8(img * 255)).save(os.path.join(save_dir, str(i) + class_type +'.png'))
 
 #############################################################################################################
 # main
@@ -137,12 +132,12 @@ def main(args_):
     ### positive query
     pos_loss, pos_idx = find_knn(nn_obj, pos_query_imgs, args)
     save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, pos_idx])
-    plot_closest_images(pos_idx, pos_query_imgs, syn_imgs, save_dir)
+    plot_closest_images(pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
 
     ### negative query
     neg_loss, neg_idx = find_knn(nn_obj, neg_query_imgs, args)
     save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, neg_idx])
-    plot_closest_images(neg_idx, neg_query_imgs, syn_imgs, save_dir)
+    plot_closest_images(neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
 
 
 def update_args(args, config_dict):

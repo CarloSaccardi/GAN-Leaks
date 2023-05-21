@@ -80,7 +80,6 @@ def get_loader(imge_size):
     transform = transforms.Compose([
         transforms.Resize(size=(imge_size,imge_size), interpolation=Image.NEAREST),
         transforms.ToTensor(),
-        transforms.RandomHorizontalFlip(p=0.5),
         transforms.Normalize([0.5 for _ in range(args.nc)], 
                              [0.5 for _ in range(args.nc)])
     ])
@@ -142,7 +141,9 @@ def train_fn(critic, gen, step, alpha, opt_critic, opt_gen, scaler_critic, scale
 
 def main():
 
-    #TODO: add seed for reproducibility and initialization of weights
+    #set seed for reproducibility
+    torch.manual_seed(0)
+    np.random.seed(0)
 
     now = datetime.datetime.now() # To create a unique folder for each run
     timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
@@ -227,7 +228,7 @@ def main():
                 batch_start = batch_idx * batch_size
                 batch_end = min(batch_start + batch_size, args.num_generated)
 
-                batch_noise = torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
+                batch_noise = 0.3 * torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
                 #normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
                 to_pil = transforms.ToPILImage()
 

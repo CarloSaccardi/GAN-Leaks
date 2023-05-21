@@ -32,12 +32,11 @@ def main():
     diz = {}
     with open(args.identity_annotations) as f:
         for line in f:
-            identity, annotation = line.strip().split()
+            annotation, identity = line.strip().split()
             diz.setdefault(annotation, []).append(identity)
 
 
     identities = list(diz.keys())
-    random.shuffle(identities)
     private_identities = identities[:len(identities)//2]
     public_identities = identities[len(identities)//2:]
     private_images = []

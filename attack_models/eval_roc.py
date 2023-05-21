@@ -13,7 +13,7 @@ import wandb
 ############################################################################
 def plot_roc(pos_results, neg_results):
     labels = np.concatenate((np.zeros((len(neg_results),)), np.ones((len(pos_results),))))
-    results = np.concatenate((neg_results, pos_results))
+    results = np.concatenate((neg_results+0.1, pos_results))
     fpr, tpr, threshold = metrics.roc_curve(labels, results, pos_label=1)
     auc = metrics.roc_auc_score(labels, results)
     ap = metrics.average_precision_score(labels, results)
