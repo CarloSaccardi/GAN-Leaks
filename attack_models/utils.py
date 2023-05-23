@@ -147,13 +147,8 @@ def visualize_samples(img_r01, save_dir):
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, 'samples.png'))
 
+
 ### Hyperparameters
-LAMBDA2 = 0.2
-LAMBDA3 = 0.0001
-RANDOM_SEED = 1000
-
-
-
 
 class Loss(torch.nn.Module):
     def __init__(self, distance, if_norm_reg=False):
@@ -174,9 +169,9 @@ class Loss(torch.nn.Module):
             self.loss_l2_fn = lambda x, y: torch.mean((y - x) ** 2, dim=[1, 2, 3])
 
     def forward(self, x_hat, x_gt):
-        x_gt = torch.from_numpy(x_gt).float().reshape(1, 3, 64, 64).cuda()
-        x_hat = torch.from_numpy(x_hat).float().reshape(1, 3, 64, 64).cuda()
+        #x_gt = torch.from_numpy(x_gt).float().reshape(1, 3, 64, 64).cuda()
+        #x_hat = torch.from_numpy(x_hat).float().reshape(1, 3, 64, 64).cuda()
         self.loss_lpips = self.loss_lpips_fn(x_hat, x_gt)
         self.loss_l2 = self.loss_l2_fn(x_hat, x_gt)
-        self.vec_loss = LAMBDA2 * self.loss_lpips +  self.loss_l2
+        self.vec_loss = 0.2 * self.loss_lpips +  self.loss_l2
         return self.vec_loss

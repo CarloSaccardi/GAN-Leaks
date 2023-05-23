@@ -228,7 +228,7 @@ def main():
                 batch_start = batch_idx * batch_size
                 batch_end = min(batch_start + batch_size, args.num_generated)
 
-                batch_noise = 0.3 * torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
+                batch_noise = torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
                 #normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
                 to_pil = transforms.ToPILImage()
 

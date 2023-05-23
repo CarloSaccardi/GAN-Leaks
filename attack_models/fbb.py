@@ -35,6 +35,7 @@ def parse_arguments():
     parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
     return parser.parse_args()
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def check_args(args):
     '''
@@ -86,6 +87,26 @@ def find_knn(nn_obj, query_imgs, args):
         idx = np.array(idx)
     return dist, idx
 
+def custom_knn(query_imgs, sample, loss, args):
+    distances = []
+    indices = []
+    
+    for i in range(len(query_imgs)):
+        x_gt = torch.unsqueeze(query_imgs[i], 0)
+        x_hat = torch.unsqueeze(sample, 0)
+        distances.append(loss(x_hat, x_gt))
+        indices.append(torch.tensor([i]))
+    
+    distances = torch.cat(distances)
+    indices = torch.cat(indices)
+    
+    min_distance, min_index = torch.min(distances, dim=0)
+    
+    return min_distance.item(), indices[min_index].item()
+
+
+
+
 def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, class_type, num=20):
     '''
     plot the closest images
@@ -97,8 +118,8 @@ def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, class_type, num=20)
     :return:
     '''
     for i in range(num):
-        query_img = query_imgs[i]
-        syn_img = syn_imgs[idx[i][0]]
+        query_img = syn_imgs[i]
+        syn_img = query_imgs[idx[i][0]]
         img = np.concatenate((query_img, syn_img), axis=1)
         img = (img + 1.) / 2.
         PIL.Image.fromarray(np.uint8(img * 255)).save(os.path.join(save_dir, str(i) + class_type +'.png'))
@@ -113,29 +134,49 @@ def main(args_):
     ### load generated samples
     syn_data_paths = get_filepaths_from_dir(args.syn_data_path, ext='png')
     syn_imgs = np.array([read_image(f, resolution) for f in syn_data_paths])
-    gen_feature = np.reshape(syn_imgs, [len(syn_imgs), -1])
+    syn_imgs = torch.from_numpy(syn_imgs).float().permute(0, 3, 1, 2).to(device)
+
 
     ### load query images
     pos_data_paths = get_filepaths_from_dir(args.pos_data_dir, ext='png')
     pos_query_imgs = np.array([read_image(f, resolution) for f in pos_data_paths])
+    pos_query_imgs = torch.from_numpy(pos_query_imgs).float().permute(0, 3, 1, 2).to(device)
 
     neg_data_paths = get_filepaths_from_dir(args.neg_data_dir, ext='png')
     neg_query_imgs = np.array([read_image(f, resolution) for f in neg_data_paths])
+    neg_query_imgs = torch.from_numpy(neg_query_imgs).float().permute(0, 3, 1, 2).to(device)
 
     ### load the distance function
     custom_loss = Loss('l2-lpips', if_norm_reg=False)
 
-    ### nearest neighbor search
-    nn_obj = NearestNeighbors(n_neighbors=args.K, algorithm='auto', metric=lambda a,b: custom_loss(a,b).detach().cpu().numpy() )
-    nn_obj.fit(gen_feature)#fitting NN classifier on the generated samples
+    pos_loss = []
+    pos_idx = []
+
+    neg_loss = []
+    neg_idx = []
+
+    for sample in tqdm(syn_imgs):
+
+        pos_loss_item, pos_idx_item = custom_knn(pos_query_imgs, sample, custom_loss, args) #find closest positive image
+        neg_loss_item, neg_idx_item = custom_knn(neg_query_imgs, sample, custom_loss, args) #find closest negative image
+        print(pos_loss_item, neg_loss_item)
+
+        pos_loss.append(pos_loss_item)
+        pos_idx.append(pos_idx_item)
+        neg_loss.append(neg_loss_item)
+        neg_idx.append(neg_idx_item)
+
+    pos_loss = np.array(pos_loss).reshape(-1, 1)
+    pos_idx = np.array(pos_idx).reshape(-1, 1)
+
+    neg_loss = np.array(neg_loss).reshape(-1, 1)
+    neg_idx = np.array(neg_idx).reshape(-1, 1)
 
     ### positive query
-    pos_loss, pos_idx = find_knn(nn_obj, pos_query_imgs, args)
     save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, pos_idx])
     plot_closest_images(pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
 
     ### negative query
-    neg_loss, neg_idx = find_knn(nn_obj, neg_query_imgs, args)
     save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, neg_idx])
     plot_closest_images(neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
 

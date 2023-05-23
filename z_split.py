@@ -8,7 +8,7 @@ import random
 import numpy as np
 # Parse command line arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_images', type=float, default=1024,
+parser.add_argument('--num_images', type=float, default=2048,
                     help='the number of images to move to the two directories')
 parser.add_argument('--identity_annotations', type=str, default='data/identities_ann.txt',
                     help='the path to the identity annotations file')
@@ -91,6 +91,7 @@ def main():
         src_path = os.path.join(args.input_dir, img)
         dst_path = os.path.join(args.output_dir2, img_id + '.png')
         center_crop(src_path, dst_path)
+
 
 
 
