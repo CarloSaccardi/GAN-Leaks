@@ -154,12 +154,11 @@ def main(args_):
 
     neg_loss = []
     neg_idx = []
-
+    i=0
     for sample in tqdm(syn_imgs):
 
         pos_loss_item, pos_idx_item = custom_knn(pos_query_imgs, sample, custom_loss, args) #find closest positive image
         neg_loss_item, neg_idx_item = custom_knn(neg_query_imgs, sample, custom_loss, args) #find closest negative image
-        print(pos_loss_item, neg_loss_item)
 
         pos_loss.append(pos_loss_item)
         pos_idx.append(pos_idx_item)
@@ -174,11 +173,11 @@ def main(args_):
 
     ### positive query
     save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, pos_idx])
-    plot_closest_images(pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
+    #plot_closest_images(pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
 
     ### negative query
     save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, neg_idx])
-    plot_closest_images(neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
+    #plot_closest_images(neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
 
 
 def update_args(args, config_dict):

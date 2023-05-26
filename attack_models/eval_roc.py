@@ -66,6 +66,9 @@ def main():
         pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy')).flatten()
         neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy')).flatten()
 
+    idx = np.nonzero(pos_loss < 0.15)[0]
+    pos_loss = pos_loss[idx]
+    neg_loss = neg_loss[idx]
     ### plot roc curve
     fpr, tpr, threshold, auc, ap = plot_roc(-pos_loss, -neg_loss)
     plt.plot(fpr, tpr, label='%s attack, auc=%.3f, ap=%.3f' % (attack_type, auc, ap))
@@ -120,7 +123,7 @@ def update_args(args, config_dict):
 if __name__ == '__main__':
 
     args = parse_arguments()
-    args.local_config = 'attack_models/attack_eval.yaml'
+    #args.local_config = 'attack_models/attack_eval.yaml'
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)

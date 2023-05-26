@@ -1,10 +1,11 @@
-data_path: data/celebAhuge_positive
-training: True
+data_path: data/train
+training: False
 generate: True
-num_generated: 20000
+num_generated: 2040
 num_epochs: 50
 batch_size: [32, 32, 32, 16, 16]
 lr: 0.001
 image_size: 64
 nz: 512
 in_channels: 512
+saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_23__19_50_01
