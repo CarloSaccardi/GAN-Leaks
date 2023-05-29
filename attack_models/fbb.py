@@ -30,7 +30,7 @@ def parse_arguments():
     parser.add_argument('--resolution', '-resolution', type=int, default=64,
                         help='generated image resolution')
     parser.add_argument('--K', type=int, default=5)
-    parser.add_argument('--BATCH_SIZE', type=int, default=32)
+    parser.add_argument('--BATCH_SIZE', type=int, default=30)
     parser.add_argument('--local_config', type=str, default=None)
     parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
     return parser.parse_args()
@@ -62,40 +62,15 @@ def check_args(args):
 #############################################################################################################
 # main nearest neighbor search function
 #############################################################################################################
-def find_knn(nn_obj, query_imgs, args):
-    '''
-    :param nn_obj: Nearest Neighbor object
-    :param query_imgs: query images
-    :return:
-        dist: distance between query samples to its KNNs among generated samples
-        idx: index of the KNNs
-    '''
-    dist = []
-    idx = []
-    for i in tqdm(range(len(query_imgs) // args.BATCH_SIZE)):
-        x_batch = query_imgs[i * args.BATCH_SIZE:(i + 1) * args.BATCH_SIZE]#(BATCH_SIZE, 64, 64, 3)
-        x_batch = np.reshape(x_batch, [args.BATCH_SIZE, -1])#(BATCH_SIZE, 64*64*3)
-        dist_batch, idx_batch = nn_obj.kneighbors(x_batch, args.K, return_distance=True)
-        dist.append(dist_batch)#distance between query samples to its KNNs among generated samples
-        idx.append(idx_batch)#index of the KNNs
-
-    try:
-        dist = np.concatenate(dist)
-        idx = np.concatenate(idx)
-    except:
-        dist = np.array(dist)
-        idx = np.array(idx)
-    return dist, idx
-
-def custom_knn(query_imgs, sample, loss, args):
+def custom_knn(syn_imgs, sample, loss, args):
     distances = []
     indices = []
     
-    for i in range(len(query_imgs)):
-        x_gt = torch.unsqueeze(query_imgs[i], 0)
-        x_hat = torch.unsqueeze(sample, 0)
-        distances.append(loss(x_hat, x_gt))
-        indices.append(torch.tensor([i]))
+    for i in range(len(syn_imgs) // args.BATCH_SIZE):
+        x_batch = syn_imgs[i * args.BATCH_SIZE:(i + 1) * args.BATCH_SIZE]
+        x_gt = torch.unsqueeze(sample, 0)
+        distances.append(loss(x_batch, x_gt))
+        indices.append(torch.tensor(range(i * args.BATCH_SIZE,(i + 1) * args.BATCH_SIZE)))
     
     distances = torch.cat(distances)
     indices = torch.cat(indices)
@@ -103,8 +78,6 @@ def custom_knn(query_imgs, sample, loss, args):
     min_distance, min_index = torch.min(distances, dim=0)
     
     return min_distance.item(), indices[min_index].item()
-
-
 
 
 def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, class_type, num=20):
@@ -118,8 +91,8 @@ def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, class_type, num=20)
     :return:
     '''
     for i in range(num):
-        query_img = syn_imgs[i]
-        syn_img = query_imgs[idx[i][0]]
+        syn_img = syn_imgs[idx[i][0]].cpu().numpy().transpose(1, 2, 0)
+        query_img = query_imgs[i].cpu().numpy().transpose(1, 2, 0)
         img = np.concatenate((query_img, syn_img), axis=1)
         img = (img + 1.) / 2.
         PIL.Image.fromarray(np.uint8(img * 255)).save(os.path.join(save_dir, str(i) + class_type +'.png'))
@@ -150,34 +123,35 @@ def main(args_):
     custom_loss = Loss('l2-lpips', if_norm_reg=False)
 
     pos_loss = []
-    pos_idx = []
+    plt_pos_idx = []
 
     neg_loss = []
-    neg_idx = []
-    i=0
-    for sample in tqdm(syn_imgs):
-
-        pos_loss_item, pos_idx_item = custom_knn(pos_query_imgs, sample, custom_loss, args) #find closest positive image
-        neg_loss_item, neg_idx_item = custom_knn(neg_query_imgs, sample, custom_loss, args) #find closest negative image
-
+    plt_neg_idx = []
+    
+    for sample in tqdm(pos_query_imgs):
+        pos_loss_item, plt_pos_idx_item = custom_knn(syn_imgs, sample, custom_loss, args) #find closest positive image
         pos_loss.append(pos_loss_item)
-        pos_idx.append(pos_idx_item)
-        neg_loss.append(neg_loss_item)
-        neg_idx.append(neg_idx_item)
-
+        plt_pos_idx.append(plt_pos_idx_item)
     pos_loss = np.array(pos_loss).reshape(-1, 1)
-    pos_idx = np.array(pos_idx).reshape(-1, 1)
-
+    plt_pos_idx = np.array(plt_pos_idx).reshape(-1, 1)
+    save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, np.array([i for i in range(len(pos_loss))]).reshape(-1,1)])
+    
+    
+    for sample in tqdm(neg_query_imgs):    
+        neg_loss_item, plt_neg_idx_item = custom_knn(syn_imgs, sample, custom_loss, args) #find closest negative image
+        neg_loss.append(neg_loss_item)
+        plt_neg_idx.append(plt_neg_idx_item)
     neg_loss = np.array(neg_loss).reshape(-1, 1)
-    neg_idx = np.array(neg_idx).reshape(-1, 1)
+    plt_neg_idx = np.array(plt_neg_idx).reshape(-1, 1)
+    save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, np.array([i for i in range(len(pos_loss))]).reshape(-1,1)])
 
     ### positive query
-    save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, pos_idx])
-    #plot_closest_images(pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
+
+    plot_closest_images(plt_pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
 
     ### negative query
-    save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, neg_idx])
-    #plot_closest_images(neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
+
+    plot_closest_images(plt_neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
 
 
 def update_args(args, config_dict):
@@ -188,6 +162,7 @@ def update_args(args, config_dict):
 if __name__ == '__main__':
 
     args = parse_arguments()
+    args.local_config='attack_models/config_attack_fbb.yaml'
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)

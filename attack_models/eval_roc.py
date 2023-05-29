@@ -17,7 +17,12 @@ def plot_roc(pos_results, neg_results):
     fpr, tpr, threshold = metrics.roc_curve(labels, results, pos_label=1)
     auc = metrics.roc_auc_score(labels, results)
     ap = metrics.average_precision_score(labels, results)
-    return fpr, tpr, threshold, auc, ap
+    
+    result_array = np.zeros_like(results)
+    result_array[results > -0.2] = 1
+    precision = metrics.precision_score(labels, result_array)
+    
+    return fpr, tpr, threshold, auc, ap, precision
 
 
 def plot_hist(pos_dist, neg_dist, save_file):
@@ -66,13 +71,14 @@ def main():
         pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy')).flatten()
         neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy')).flatten()
 
-    idx = np.nonzero(pos_loss < 0.15)[0]
+    idx = np.nonzero(pos_loss < 0.20)[0]
     pos_loss = pos_loss[idx]
     neg_loss = neg_loss[idx]
     ### plot roc curve
-    fpr, tpr, threshold, auc, ap = plot_roc(-pos_loss, -neg_loss)
+    fpr, tpr, threshold, auc, ap, precision = plot_roc(-pos_loss, -neg_loss)
     plt.plot(fpr, tpr, label='%s attack, auc=%.3f, ap=%.3f' % (attack_type, auc, ap))
     print("The AUC ROC value of %s attack is: %.3f " % (attack_type, auc))
+    print("The precision of %s attack is: %.3f " % (attack_type, precision))
 
     ################################################################
     # attack calibration

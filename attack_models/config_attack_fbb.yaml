@@ -1,11 +1,10 @@
 ############ ATTACK ##########
-exp_name: progan_debug_6
-syn_data_path: ersecki-thesis/syn_data/dcgan/png_images/_2023_05_23__22_58_47
-pos_data_dir: data/train
+exp_name: progan_debug_1
+syn_data_path: ersecki-thesis/syn_data/dcgan/png_images/_2023_05_28__19_48_28
+pos_data_dir: data/celebAhuge_positive
 neg_data_dir: data/celebAhuge_negative
-data_num: 20000
 K: 1
-BATCH_SIZE: 32
+BATCH_SIZE: 64
 
 
 ############ METRICS #########s

@@ -1,5 +1,5 @@
 data_path: data/train
-training: False
+training: True
 generate: True
 num_generated: 2040
 num_epochs: 50
@@ -8,4 +8,4 @@ lr: 0.001
 image_size: 64
 nz: 512
 in_channels: 512
-saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_23__19_50_01
+#saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_23__19_50_01
