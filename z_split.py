@@ -44,7 +44,7 @@ def main():
     assert any(ann in private_identities for ann in public_identities) == False, 'The two lists are not disjoint!'
     private_images = []
     public_images = []
-    assert args.num_images % 30 == 0, 'num_images must be divisible by 3!, either 510, 1020, 2040, 10002, 20001'
+    assert args.num_images % 30 == 0, 'num_images must be divisible by 30!, either 510, 1020, 2040, 10002, 20001'
     considered_images = args.num_images // 3
     for identity in private_identities:
         if len(private_images) < considered_images:

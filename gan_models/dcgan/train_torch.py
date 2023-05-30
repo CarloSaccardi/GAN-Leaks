@@ -171,6 +171,7 @@ def main():
                 pil_img = to_pil(img)
                 save_path = os.path.join(dirname_png_images, f"image_{i}.png")
                 pil_img.save(save_path)        
+   
 
 
 def update_args(args, config_dict):
