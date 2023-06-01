@@ -3,4 +3,4 @@ data_path: data/train
 training: False
 generate: True
 batch_size: 2040
-saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_30__08_29_23
+saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_30__17_50_09

@@ -1,6 +1,6 @@
 ############ ATTACK ##########
-exp_name: progan_debug_1
-syn_data_path: ersecki-thesis/syn_data/dcgan/png_images/_2023_05_30__08_42_13
+exp_name: dcgan_2040
+syn_data_path: ersecki-thesis/syn_data/dcgan/png_images/_2023_05_30__18_08_28
 pos_data_dir: data/celebAhuge_positive
 neg_data_dir: data/celebAhuge_negative
 K: 1
