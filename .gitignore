@@ -1,7 +1,7 @@
 
 *.pyc
 *.log
-*.pth 
+
 wandb
 *.npz
 *.png
