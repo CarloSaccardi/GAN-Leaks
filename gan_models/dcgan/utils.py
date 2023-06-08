@@ -1,5 +1,5 @@
 import os
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import PIL.Image as Image
 
 
@@ -23,6 +23,9 @@ class CustomDataset(Dataset):
             return image, self.labels[index]
         return image
     
+    def __getlen__(self):
+        return len(self.img_list)
+    
 class MySubDataset(Dataset):
     def __init__(self, data):
         self.data = data
@@ -34,3 +37,14 @@ class MySubDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
+    
+    def __getlen__(self):
+        return len(self.data)
+    
+#class dataloader that returns the len of the dataset
+class MyDataLoader(DataLoader):
+    def __init__(self, dataset, batch_size=1, shuffle=False):
+        super(MyDataLoader, self).__init__(dataset, batch_size, shuffle)
+        
+    def __len__(self):
+        return self.dataset.__getlen__()

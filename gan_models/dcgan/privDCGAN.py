@@ -7,14 +7,14 @@ import torch.optim as optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as dset
-from torch.utils.data import Subset, TensorDataset, ConcatDataset
+from torch.utils.data import TensorDataset
 import numpy as np
 import numpy as np
 import yaml
 import warnings
 import datetime
 import math
-from utils import CustomDataset, MySubDataset
+from utils import CustomDataset, MySubDataset, MyDataLoader
 import itertools
 
 from model_torch import Generator, Discriminator, PrivateDiscriminator, initialize_weights
@@ -113,7 +113,7 @@ def main():
         for i in range(args.N_splits):
             filtered_dataset = [(data, label) for data, label in dataset if label == i]
             filtered_dataset = MySubDataset(filtered_dataset)
-            X_loaders += [torch.utils.data.DataLoader(filtered_dataset, batch_size=args.batch_size, shuffle=True)]
+            X_loaders.append(MyDataLoader(filtered_dataset, batch_size=args.batch_size, shuffle=True))
 
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
@@ -142,14 +142,15 @@ def main():
 
         ####################### DEFINE MODELS ############################
         
-        gen = Generator(args.nz, args.nc, args.ngf).to(device)
-        disc = Discriminator(args.nc, args.ndf).to(device)
+        genS = [Generator(args.nz, args.nc, args.ngf).to(device) for _ in range(args.N_splits)]
+        discS = [Discriminator(args.nc, args.ndf).to(device) for _ in range(args.N_splits)]
         private_disc = PrivateDiscriminator(args.nc, args.ndf, args.N_splits).to(device)
         #initialize weights for each gen disc pair
-        initialize_weights(gen)
-        initialize_weights(disc)
-        opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) 
-        opt_disc = optim.Adam(disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) 
+        for i in range(args.N_splits):
+            initialize_weights(genS[i])
+            initialize_weights(discS[i])
+        opt_genS = [optim.Adam(genS[i].parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) for i in range(args.N_splits)]
+        opt_discS = [optim.Adam(discS[i].parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) for i in range(args.N_splits)]
         opt_private_disc = optim.Adam(private_disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
         loss_fn = torch.nn.CrossEntropyLoss()
         criterion = torch.nn.BCELoss()
@@ -158,8 +159,9 @@ def main():
         if args.training:
 
             private_disc.train()
-            gen.train()
-            disc.train()
+            for i in range(args.N_splits):
+                genS[i].train()
+                discS[i].train()
 
             #### PRE-TRAIN PRIVATE DISCRIMINATOR ####
             for epoch in range(args.disc_epochs):
@@ -177,11 +179,11 @@ def main():
                 print("pre-train private discriminator loss: ", loss.item(), "epoch: ", epoch)
             ##########################################
 
-            train_privGAN(genS = [gen]*args.N_splits ,
-                    discS = [disc]*args.N_splits, 
+            train_privGAN(genS = genS ,
+                    discS = discS, 
                     criterion = criterion,
-                    opt_gen = opt_gen, 
-                    opt_disc = opt_disc, 
+                    opt_genS = opt_genS, 
+                    opt_discS = opt_discS, 
                     private_disc=private_disc,
                     opt_private_disc = opt_private_disc,
                     t = t, 
@@ -236,31 +238,38 @@ def main():
                 pil_img.save(save_path)
 
 
-def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn, X_loaders, timestamp):
-
+def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_disc, t, criterion, loss_fn, X_loaders, timestamp):
+    #set detect anomaly to true
+    torch.autograd.set_detect_anomaly(True)
     #train generator and discriminator for gen_epochs
     batchCount = int(t // args.batch_size) + 1
 
     for epoch in range(args.num_epochs):
 
-        d_t = np.zeros((args.N_splits, batchCount))
-        dp_t = np.zeros(batchCount * args.N_splits)
-        g_t = np.zeros(batchCount * args.N_splits)
+        d_t = np.zeros(batchCount)
+        dp_t = np.zeros(batchCount*2)
+        g_t = np.zeros(batchCount)
 
+        labels_list = [[] for _ in range(args.N_splits)]
+        noise_list = [[] for _ in range(args.N_splits)]
+        fake_list = [[] for _ in range(args.N_splits)]
+
+        ###### TRAIN DISCRIMINATORS for one epoch ######
         #for each dataloader in dataloader_N, train the discriminator
-        for split in range(args.N_splits):
+        for j in range(batchCount):
+            for split in range(args.N_splits):
 
-            l = list(range(args.N_splits))
-            del(l[split])
-            gen_y =  np.random.choice( l, t )
-            gen_y = torch.tensor(gen_y, dtype=torch.float32).to(device)
-
-            for i, (imgs, labels) in enumerate(X_loaders[split]):
+                loader = [ (i, (imgs, labels)) for i, (imgs, labels) in enumerate(X_loaders[split])]
+                i, (imgs, labels) = loader[j]
 
                 imgs = imgs.to(device)
                 labels = labels.to(device)
                 noise = torch.randn(imgs.shape[0], args.nz, 1, 1).to(device)
                 fake = genS[split](noise)
+
+                labels_list[split].append(labels)
+                noise_list[split].append(noise)
+                fake_list[split].append(fake)
 
                 # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
                 disc_real = discS[split](imgs).reshape(-1)
@@ -268,46 +277,64 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 disc_fake = discS[split](fake.detach()).reshape(-1)
                 lossD_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
                 lossD = (lossD_real + lossD_fake) / 2
+
                 discS[split].zero_grad()
-                lossD.backward()
-                opt_disc.step()
-                d_t[split, i] = lossD.item()
+                lossD.backward(retain_graph=True)
+                opt_discS[split].step()
 
+                d_t[j] = lossD.item()
+            d_t[j] = (d_t[j] + lossD.item())/args.N_splits
+        ##########################################################################################
 
-                #train private discriminator. Label is the split index of the data. Goal is to determine which
-                #generator produced the data. Hence, we use the split index as the label
-                if epoch > args.dp_delay:
-                    output = private_disc(fake).reshape(-1, args.N_splits)
+        ###### TRAIN PRIVATE DISCRIMINATOR for one epoch ######
+        #train private discriminator --> max log(Di_p(G(z)))
+        if epoch > args.dp_delay:
 
-                    loss_Dp = loss_fn(output, labels)
+            fake_tensor = torch.cat([element for inner_list in fake_list for element in inner_list], dim=0)
+            labels_tensor = torch.cat([element for inner_list in labels_list for element in inner_list], dim=0)
+            dataset = TensorDataset(fake_tensor, labels_tensor)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-                    private_disc.zero_grad()
-                    loss_Dp.backward(retain_graph=True)
-                    opt_private_disc.step()
+            for i, (fake, labels) in enumerate(loader):
+                output = private_disc(fake.detach()).reshape(-1, args.N_splits)
 
-                    dp_t[i] = loss_Dp.item()
+                loss_Dp = loss_fn(output, labels)
 
+                private_disc.zero_grad()
+                loss_Dp.backward()
+                opt_private_disc.step()
 
-                # train generator. Goal is to fool the discriminator and the private discriminator.
-                # Hence, we use different split index as the label for loss_fn, and ones as the label for
-                #criterion.
+                dp_t[i] = loss_Dp.item()
+        ##########################################################################################
+                
+        ###### TRAIN GENERATORs for one epoch ######
+        for j in range(batchCount):
+
+            for split in range(args.N_splits):
+
+                noise = noise_list[split][j]
+                fake = genS[split](noise)
+                
+                l = list(range(args.N_splits))
+                del(l[split])
+                gen_y =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
+
+                # train generator --> min log(1-D(G(z))) <-> max log(D(G(z)))
                 output1 = discS[split](fake).reshape(-1)
                 output2 = private_disc(fake).reshape(-1, args.N_splits)
-                labels_gen = gen_y[i*imgs.shape[0]:(i+1)*imgs.shape[0]] #labels is a different split index to fool the private discriminator
 
                 lossG_1 = criterion(output1, torch.ones_like(output1))
-                lossG_2 = args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
+                lossG_2 = args.privacy_ratio * loss_fn(output2, gen_y.long())
                 lossG = lossG_1 + lossG_2
 
-                genS[split].zero_grad()
-                lossG.backward()
-                opt_gen.step()
+                genS[split].zero_grad()  
+                lossG.backward() 
+                opt_genS[split].step()
 
-                g_t[i] = lossG.item()    
+                g_t[j] = lossG.item() 
+            g_t[j] = (g_t[j] + lossG.item() )/args.N_splits
+        ##########################################################################################
 
-            #prepare labels for generator: random numbers as the goal is not only too fool 
-            #the discriminator but also the private discriminator. A random lable makes the
-            #generator generate images that are not too similar to the ones from the same split
 
 
         with torch.no_grad():

@@ -1,6 +1,6 @@
 ############ ATTACK ##########
 exp_name: privDCGAN_2040_10_10
-syn_data_path: ersecki-thesis/syn_data/privDCGAN/png_images/_2023_06_07__18_09_28
+syn_data_path: ersecki-thesis/syn_data/privDCGAN/png_images/_2023_06_08__09_53_05
 pos_data_dir: data/celebAhuge_positive
 neg_data_dir: data/celebAhuge_negative
 K: 1
