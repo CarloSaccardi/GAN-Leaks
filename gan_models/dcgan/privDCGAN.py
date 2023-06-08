@@ -13,8 +13,8 @@ import numpy as np
 import yaml
 import warnings
 import datetime
-import torchvision
-from utils import CustomDataset
+import math
+from utils import CustomDataset, MySubDataset
 import itertools
 
 from model_torch import Generator, Discriminator, PrivateDiscriminator, initialize_weights
@@ -34,7 +34,7 @@ parser.add_argument('--dp_delay', type=int, default=100, help='starting epoch fo
 parser.add_argument('--out_size', type=int, help='number of output images')
 parser.add_argument('--beta1', type=float, default=0.5 , help='beta1 for adam. default=0.5')
 parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for adam. default=0.999')
-parser.add_argument('--data_name', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
+parser.add_argument('--data_path', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument('--local_config', default=None, help='path to config file')
 parser.add_argument('--hyperparameter_search',  default=None, help='path to config file')
@@ -63,6 +63,12 @@ fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)
 torch.autograd.set_detect_anomaly(True)
 
 def main():
+    #set seed for reproducibility
+    torch.manual_seed(0)
+    np.random.seed(0) 
+
+    now = datetime.datetime.now() # To create a unique folder for each run
+    timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
 
     #### HYPERPARAMETER SEARCH, DEFINE PARAMETERS TO TUNE ####
     if args.hyperparameter_search is not None:
@@ -97,13 +103,25 @@ def main():
                         transforms.ToTensor(),
                         transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
                         ])
-        dataset = CustomDataset(root= os.path.join('data', args.data_name), transform=transform, n = args.num_images)
+        dataset = CustomDataset(root= args.data_path, transform=transform)
+        assert len(dataset) % args.N_splits == 0, "Dataset size must be divisible by N_splits"
+        t = len(dataset)//args.N_splits
+        lables = [[i]*t for i in range(args.N_splits)]
+        lables = list(itertools.chain.from_iterable(lables))
+        dataset.labels = torch.tensor(lables)
+        X_loaders = []
+        for i in range(args.N_splits):
+            filtered_dataset = [(data, label) for data, label in dataset if label == i]
+            filtered_dataset = MySubDataset(filtered_dataset)
+            X_loaders += [torch.utils.data.DataLoader(filtered_dataset, batch_size=args.batch_size, shuffle=True)]
+
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
 
         ####################### SPLIT DATASET ############################
+        """
         X = []
-        t = len(dataset)//args.N_splits
+        
         y_train = []
         X_loaders = []
 
@@ -119,6 +137,7 @@ def main():
                 X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
                 y_train += [i]*(len(dataset)-i*t)
         y_train = np.array(y_train) + 0.0 
+        """
         ###################################################################
 
         ####################### DEFINE MODELS ############################
@@ -126,12 +145,11 @@ def main():
         gen = Generator(args.nz, args.nc, args.ngf).to(device)
         disc = Discriminator(args.nc, args.ndf).to(device)
         private_disc = PrivateDiscriminator(args.nc, args.ndf, args.N_splits).to(device)
+        #initialize weights for each gen disc pair
         initialize_weights(gen)
         initialize_weights(disc)
-        initialize_weights(private_disc)
-
-        opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
-        opt_disc = optim.Adam(disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+        opt_gen = optim.Adam(gen.parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) 
+        opt_disc = optim.Adam(disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) 
         opt_private_disc = optim.Adam(private_disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
         loss_fn = torch.nn.CrossEntropyLoss()
         criterion = torch.nn.BCELoss()
@@ -139,22 +157,19 @@ def main():
 
         if args.training:
 
+            private_disc.train()
             gen.train()
             disc.train()
-            private_disc.train()
 
             #### PRE-TRAIN PRIVATE DISCRIMINATOR ####
             for epoch in range(args.disc_epochs):
-                for i, (imgs) in enumerate(dataloader):
+                for i, (imgs, labels) in enumerate(dataloader):
                     imgs = imgs.to(device)
-                    batch_size = imgs.shape[0]
-                    lables = y_train[i*batch_size:(i+1)*batch_size]
-                    lables = torch.tensor(lables).type(torch.LongTensor).to(device)
+                    labels = labels.to(device)
 
                     opt_private_disc.zero_grad()
                     output = private_disc(imgs).reshape(-1, args.N_splits)
-
-                    loss = loss_fn(output, lables)
+                    loss = loss_fn(output, labels)
                     loss.backward()
 
                     opt_private_disc.step()
@@ -172,16 +187,56 @@ def main():
                     t = t, 
                     loss_fn = loss_fn,
                     X_loaders = X_loaders,
-                    X = X)
+                    timestamp=timestamp)
             
             if args.wandb:
                 wandb.finish()
 
+        if args.generate:
+            #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
 
-def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn, X_loaders, X):
+            gen = Generator(args.nz, args.nc, args.ngf).to(device)
+            
+            if args.params_keys is None:
+                dirname = os.path.join(args.PATH, timestamp)
+            else:
+                dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
 
-    now = datetime.datetime.now() # To create a unique folder for each run
-    timestamp = now.strftime("_%Y_%m_%d__%H_%M_%S")  # To create a unique folder for each run
+            if args.training:
+                gen.load_state_dict(torch.load(os.path.join(dirname, "gen0.pth")))
+            else:
+                assert args.saved_model_name is not None, "Please specify the saved model name"
+                assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
+                gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen0.pth")))
+            
+        gen.eval()
+
+        with torch.no_grad():
+            noise = torch.randn(args.num_generated, args.nz, 1, 1, device=device)
+            normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
+            to_pil = transforms.ToPILImage()
+
+            fake = gen(noise).detach().cpu()
+            fake = normalize(fake)
+
+            dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
+            dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+            dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+
+            os.makedirs(dirname_npz_images, exist_ok=True)
+            np.savez(os.path.join(dirname_npz_images, "dcgan_synthetic_data.npz"), fake=fake)
+
+            os.makedirs(dirname_npz_noise, exist_ok=True)
+            np.savez(os.path.join(dirname_npz_noise, "dcgan_noise.npz"), noise=noise.cpu())
+
+            os.makedirs(dirname_png_images, exist_ok=True)
+            for i, img in enumerate(fake):
+                pil_img = to_pil(img)
+                save_path = os.path.join(dirname_png_images, f"image_{i}.png")
+                pil_img.save(save_path)
+
+
+def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn, X_loaders, timestamp):
 
     #train generator and discriminator for gen_epochs
     batchCount = int(t // args.batch_size) + 1
@@ -197,12 +252,13 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
 
             l = list(range(args.N_splits))
             del(l[split])
-            gen_y =  np.random.choice( l, ( len( X[split] ) , ) )
+            gen_y =  np.random.choice( l, t )
             gen_y = torch.tensor(gen_y, dtype=torch.float32).to(device)
 
-            for i, (imgs) in enumerate(X_loaders[split]):
+            for i, (imgs, labels) in enumerate(X_loaders[split]):
 
                 imgs = imgs.to(device)
+                labels = labels.to(device)
                 noise = torch.randn(imgs.shape[0], args.nz, 1, 1).to(device)
                 fake = genS[split](noise)
 
@@ -221,14 +277,12 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 #train private discriminator. Label is the split index of the data. Goal is to determine which
                 #generator produced the data. Hence, we use the split index as the label
                 if epoch > args.dp_delay:
-                    output = private_disc(fake.detach()).reshape(-1, args.N_splits)
-                    labels_Dp = torch.tensor([split]*imgs.shape[0], dtype=torch.float32).type(torch.LongTensor).to(device)
+                    output = private_disc(fake).reshape(-1, args.N_splits)
 
-                    loss_Dp = loss_fn(output, labels_Dp)
+                    loss_Dp = loss_fn(output, labels)
 
                     private_disc.zero_grad()
-                    loss_Dp.backward()
-
+                    loss_Dp.backward(retain_graph=True)
                     opt_private_disc.step()
 
                     dp_t[i] = loss_Dp.item()
@@ -243,7 +297,6 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
 
                 lossG_1 = criterion(output1, torch.ones_like(output1))
                 lossG_2 = args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
-
                 lossG = lossG_1 + lossG_2
 
                 genS[split].zero_grad()
@@ -277,40 +330,6 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
             torch.save(discS[i].state_dict(), os.path.join(dirname, f"disc{i}.pth") )
         torch.save(private_disc.state_dict(), os.path.join(dirname, "private_disc.pth"))
 
-    if args.generate:
-        #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
-
-        gen = Generator(args.nz, args.nc, args.ngf).to(device)
-
-        if args.training:
-            gen.load_state_dict(torch.load(os.path.join(dirname, "gen0.pth")))
-        else:
-            assert args.saved_model_name is not None, "Please specify the saved model name" 
-            assert args.wandb == None, "No need to load anything to wandb when only generating synthetic data"
-            gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "generator.pth")))
-        
-        gen.eval()
-
-        with torch.no_grad():
-            noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
-            normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
-            to_pil = transforms.ToPILImage()
-
-            fake = gen(noise).detach().cpu()
-            fake = normalize(fake)
-
-            if args.params_keys is None:
-                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
-                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
-            else:
-                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', args.params_keys, args.params_values) 
-                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', args.params_keys, args.params_values) 
-
-            os.makedirs(dirname_npz_images, exist_ok=True)
-            np.savez(os.path.join(dirname_npz_images, "dcgan_synthetic_data.npz"), fake=fake)
-
-            os.makedirs(dirname_npz_noise, exist_ok=True)
-            np.savez(os.path.join(dirname_npz_noise, "dcgan_noise.npz"), noise=noise.cpu())
 
 def update_args(args, config_dict):
     for key, val in config_dict.items():
@@ -319,6 +338,8 @@ def update_args(args, config_dict):
 
 
 if __name__ == '__main__':
+
+    args.local_config= 'gan_models/dcgan/dcgan_config.yaml'
 
     if args.local_config is not None:
 

@@ -1,6 +1,11 @@
 num_epochs: 100
 data_path: data/train
-training: False
+training: True
 generate: True
-batch_size: 2040
-saved_model_name: ersecki-thesis/model_save/dcgan/_2023_05_30__17_50_09
+batch_size: 32
+num_generated: 2040
+#### privDCGAN parameters #####
+N_splits: 2
+privacy_ratio: 1
+dp_delay: 25
+disc_epochs: 25

@@ -143,6 +143,66 @@ class Discriminator(nn.Module):
         out = self.minibatch_std(out)
         return self.final_block(out).view(x.shape[0], -1)
     
+
+
+
+
+class PrivateDiscriminator(nn.Module):
+    def __init__(self, in_channels, out_channels, img_channels=3):
+        super(PrivateDiscriminator, self).__init__()
+        self.prog_blocks, self.rgb_layers = nn.ModuleList([]), nn.ModuleList([])
+        self.leaky = nn.LeakyReLU(0.2)
+        
+        for i in range(len(factors) - 1, 0, -1):
+            conv_in_channels = int(in_channels * factors[i])
+            conv_out_channels = int(in_channels * factors[i - 1])
+            self.prog_blocks.append(ConvBlock(conv_in_channels, conv_out_channels, use_pixel_norm=False))
+            self.rgb_layers.append(WSConv2d(img_channels, conv_in_channels, kernel_size=1, stride=1, padding=0))
+        
+        #this is for he 4x4 img resolution
+        self.initial_rgb = WSConv2d(img_channels, in_channels, kernel_size=1, stride=1, padding=0)
+        self.rgb_layers.append(self.initial_rgb)
+        self.avg_pool = nn.AvgPool2d(kernel_size=2, stride=2)
+        
+        #block for the 4x4 resolution
+        self.final_block = nn.Sequential(
+            WSConv2d(in_channels+1, in_channels, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2),
+            WSConv2d(in_channels, in_channels, kernel_size=4, padding=0, stride=1),
+            nn.LeakyReLU(0.2),
+            WSConv2d(in_channels, out_channels, kernel_size=1, padding=0,  stride=1),
+            nn.Softmax()
+        )
+        
+        
+        
+    def fade_in(self, alpha, downscaled, real):
+        return alpha * real + (1 - alpha) * downscaled
+    
+    def minibatch_std(self, x):
+        batch_stats = torch.std(x, dim=0).mean().expand(x.shape[0], 1, x.shape[2], x.shape[3])
+        return torch.cat([x, batch_stats], dim=1)
+    
+    def forward(self, x, steps, alpha):
+        cur_step = len(self.prog_blocks) - steps
+        out = self.leaky(self.rgb_layers[cur_step](x))
+        
+        if steps == 0:
+            out = self.minibatch_std(out)
+            return self.final_block(out).view(out.shape[0], -1)
+        
+        
+        downscaled = self.leaky(self.rgb_layers[cur_step + 1](self.avg_pool(x)))
+        out = self.avg_pool(self.prog_blocks[cur_step](out))
+        out = self.fade_in(alpha, downscaled, out)
+        
+        for step in range(cur_step + 1, len(self.prog_blocks)):
+            out = self.prog_blocks[step](out)
+            out = self.avg_pool(out)
+            
+        out = self.minibatch_std(out)
+        return self.final_block(out).view(x.shape[0], -1)
+    
     
 if __name__ == '__main__':
     z_dim = 512

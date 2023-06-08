@@ -71,9 +71,9 @@ def main():
         pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy')).flatten()
         neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy')).flatten()
 
-    idx = np.nonzero(pos_loss < 0.20)[0]
-    pos_loss = pos_loss[idx]
-    neg_loss = neg_loss[idx]
+    #idx = np.nonzero(pos_loss < 0.20)[0]
+    #pos_loss = pos_loss[idx]
+    #neg_loss = neg_loss[idx]
     ### plot roc curve
     fpr, tpr, threshold, auc, ap, precision = plot_roc(-pos_loss, -neg_loss)
     plt.plot(fpr, tpr, label='%s attack, auc=%.3f, ap=%.3f' % (attack_type, auc, ap))
