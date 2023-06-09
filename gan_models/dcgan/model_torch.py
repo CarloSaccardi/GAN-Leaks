@@ -95,6 +95,31 @@ class Generator(nn.Module):
     def forward(self, x):
         return self.gen(x)
     
+
+class stackGenerators(nn.Module):
+    def __init__(self, z_dim, channels_img, features_g, num_generators):
+        super(stackGenerators, self).__init__()
+        self.num_generators = num_generators
+        self.gen = nn.ModuleList()
+        for i in range(self.num_generators):
+            self.gen.append(Generator(z_dim, channels_img, features_g))
+        
+    def forward(self, x, i):
+        return self.gen[i](x)
+    
+class stackDiscriminators(nn.Module):
+    def __init__(self, channels_img, feature_d, num_discriminators):
+        super(stackDiscriminators, self).__init__()
+        self.num_discriminators = num_discriminators
+        self.disc = nn.ModuleList()
+        for i in range(self.num_discriminators):
+            self.disc.append(Discriminator(channels_img, feature_d))
+        
+    def forward(self, x, i):
+        return self.disc[i](x)
+    
+
+        
     
 def initialize_weights(model):
     for m in model.modules():

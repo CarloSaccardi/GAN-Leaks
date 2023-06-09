@@ -17,7 +17,7 @@ import math
 from utils import CustomDataset, MySubDataset, MyDataLoader
 import itertools
 
-from model_torch import Generator, Discriminator, PrivateDiscriminator, initialize_weights
+from model_torch import stackDiscriminators, stackGenerators, PrivateDiscriminator, initialize_weights
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr', type=float, default=2e-4, help='learning rate, default=0.0002')
@@ -117,40 +117,18 @@ def main():
 
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-
-        ####################### SPLIT DATASET ############################
-        """
-        X = []
-        
-        y_train = []
-        X_loaders = []
-
-        for i in range(args.N_splits):
-            if i<args.N_splits-1:
-                dataset_split = Subset(dataset, range(i*t, (i+1)*t))
-                X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
-                X += [dataset_split]
-                y_train += [i]*t
-            else:
-                dataset_split = Subset(dataset, range(i*t, len(dataset)))
-                X += [dataset_split]
-                X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size, shuffle=False)]
-                y_train += [i]*(len(dataset)-i*t)
-        y_train = np.array(y_train) + 0.0 
-        """
         ###################################################################
 
         ####################### DEFINE MODELS ############################
         
-        genS = [Generator(args.nz, args.nc, args.ngf).to(device) for _ in range(args.N_splits)]
-        discS = [Discriminator(args.nc, args.ndf).to(device) for _ in range(args.N_splits)]
+        genS = stackGenerators(args.nz, args.nc, args.ngf, args.N_splits).to(device)
+        discS = stackDiscriminators(args.nc, args.ndf, args.N_splits).to(device)
         private_disc = PrivateDiscriminator(args.nc, args.ndf, args.N_splits).to(device)
         #initialize weights for each gen disc pair
-        for i in range(args.N_splits):
-            initialize_weights(genS[i])
-            initialize_weights(discS[i])
-        opt_genS = [optim.Adam(genS[i].parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) for i in range(args.N_splits)]
-        opt_discS = [optim.Adam(discS[i].parameters(), lr=args.lr, betas=(args.beta1, args.beta2)) for i in range(args.N_splits)]
+        initialize_weights(genS)
+        initialize_weights(discS)
+        opt_gen = optim.Adam(genS.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+        opt_disc = optim.Adam(discS.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
         opt_private_disc = optim.Adam(private_disc.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
         loss_fn = torch.nn.CrossEntropyLoss()
         criterion = torch.nn.BCELoss()
@@ -159,9 +137,8 @@ def main():
         if args.training:
 
             private_disc.train()
-            for i in range(args.N_splits):
-                genS[i].train()
-                discS[i].train()
+            genS.train()
+            discS.train()
 
             #### PRE-TRAIN PRIVATE DISCRIMINATOR ####
             for epoch in range(args.disc_epochs):
@@ -182,8 +159,8 @@ def main():
             train_privGAN(genS = genS ,
                     discS = discS, 
                     criterion = criterion,
-                    opt_genS = opt_genS, 
-                    opt_discS = opt_discS, 
+                    opt_gen = opt_gen, 
+                    opt_disc = opt_disc, 
                     private_disc=private_disc,
                     opt_private_disc = opt_private_disc,
                     t = t, 
@@ -191,13 +168,11 @@ def main():
                     X_loaders = X_loaders,
                     timestamp=timestamp)
             
-            if args.wandb:
-                wandb.finish()
 
         if args.generate:
             #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
 
-            gen = Generator(args.nz, args.nc, args.ngf).to(device)
+            gen = stackGenerators(args.nz, args.nc, args.ngf, args.N_splits).to(device)
             
             if args.params_keys is None:
                 dirname = os.path.join(args.PATH, timestamp)
@@ -205,11 +180,11 @@ def main():
                 dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
 
             if args.training:
-                gen.load_state_dict(torch.load(os.path.join(dirname, "gen0.pth")))
+                gen.load_state_dict(torch.load(os.path.join(dirname, "gen.pth")))
             else:
                 assert args.saved_model_name is not None, "Please specify the saved model name"
                 assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
-                gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen0.pth")))
+                gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen.pth")))
             
         gen.eval()
 
@@ -218,7 +193,7 @@ def main():
             normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
             to_pil = transforms.ToPILImage()
 
-            fake = gen(noise).detach().cpu()
+            fake = gen(noise, 0).detach().cpu()
             fake = normalize(fake)
 
             dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
@@ -238,7 +213,7 @@ def main():
                 pil_img.save(save_path)
 
 
-def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_disc, t, criterion, loss_fn, X_loaders, timestamp):
+def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc, t, criterion, loss_fn, X_loaders, timestamp):
     #set detect anomaly to true
     torch.autograd.set_detect_anomaly(True)
     #train generator and discriminator for gen_epochs
@@ -246,9 +221,9 @@ def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_di
 
     for epoch in range(args.num_epochs):
 
-        d_t = np.zeros(batchCount)
+        d_t = np.zeros((batchCount, args.N_splits))
         dp_t = np.zeros(batchCount*2)
-        g_t = np.zeros(batchCount)
+        g_t = np.zeros((batchCount, args.N_splits))
 
         labels_list = [[] for _ in range(args.N_splits)]
         noise_list = [[] for _ in range(args.N_splits)]
@@ -257,6 +232,9 @@ def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_di
         ###### TRAIN DISCRIMINATORS for one epoch ######
         #for each dataloader in dataloader_N, train the discriminator
         for j in range(batchCount):
+
+            discS.zero_grad() 
+
             for split in range(args.N_splits):
 
                 loader = [ (i, (imgs, labels)) for i, (imgs, labels) in enumerate(X_loaders[split])]
@@ -265,25 +243,24 @@ def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_di
                 imgs = imgs.to(device)
                 labels = labels.to(device)
                 noise = torch.randn(imgs.shape[0], args.nz, 1, 1).to(device)
-                fake = genS[split](noise)
+                fake = genS(noise, split)
 
                 labels_list[split].append(labels)
                 noise_list[split].append(noise)
                 fake_list[split].append(fake)
 
                 # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
-                disc_real = discS[split](imgs).reshape(-1)
+                disc_real = discS(imgs, split).reshape(-1)
                 lossD_real = criterion(disc_real, torch.ones_like(disc_real))
-                disc_fake = discS[split](fake.detach()).reshape(-1)
+                disc_fake = discS(fake.detach(), split).reshape(-1)
                 lossD_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
                 lossD = (lossD_real + lossD_fake) / 2
 
-                discS[split].zero_grad()
-                lossD.backward(retain_graph=True)
-                opt_discS[split].step()
+                lossD.backward()
+                d_t[j][split] = lossD.item()
 
-                d_t[j] = lossD.item()
-            d_t[j] = (d_t[j] + lossD.item())/args.N_splits
+            opt_disc.step()
+
         ##########################################################################################
 
         ###### TRAIN PRIVATE DISCRIMINATOR for one epoch ######
@@ -310,37 +287,40 @@ def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_di
         ###### TRAIN GENERATORs for one epoch ######
         for j in range(batchCount):
 
+            genS.zero_grad() 
+
             for split in range(args.N_splits):
 
                 noise = noise_list[split][j]
-                fake = genS[split](noise)
+                fake = genS(noise, split)
                 
                 l = list(range(args.N_splits))
                 del(l[split])
                 gen_y =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
 
                 # train generator --> min log(1-D(G(z))) <-> max log(D(G(z)))
-                output1 = discS[split](fake).reshape(-1)
+                output1 = discS(fake, split).reshape(-1)
                 output2 = private_disc(fake).reshape(-1, args.N_splits)
 
                 lossG_1 = criterion(output1, torch.ones_like(output1))
                 lossG_2 = args.privacy_ratio * loss_fn(output2, gen_y.long())
-                lossG = lossG_1 + lossG_2
-
-                genS[split].zero_grad()  
+                
+                lossG = lossG_1 + lossG_2 if epoch > args.dp_delay else lossG_1
+ 
                 lossG.backward() 
-                opt_genS[split].step()
-
-                g_t[j] = lossG.item() 
-            g_t[j] = (g_t[j] + lossG.item() )/args.N_splits
+                g_t[j][split] = lossG.item()
+                
+            opt_gen.step()
         ##########################################################################################
 
 
 
         with torch.no_grad():
-            print(f"Epoch {epoch} of {args.num_epochs} complete. Loss D: {d_t.mean()}, Loss DP: {dp_t.mean()}, Loss G: {g_t.mean()}")
-            if args.wandb:
-                wandb.log({"D_loss": d_t.mean(), "DP_loss": dp_t.mean(), "G_loss": g_t.mean()})
+            #lossd and lossG has to be summed over the splits and then averaged over the batches
+            d_t = d_t.sum(axis=1).mean()
+            dp_t = dp_t.mean()
+            g_t = g_t.sum(axis=1).mean()
+            print(f"Epoch {epoch} of {args.num_epochs} complete. Loss D: {d_t}, Loss DP: {dp_t}, Loss G: {g_t}")
 
 
     #save the models
@@ -352,9 +332,8 @@ def train_privGAN(genS, discS, private_disc, opt_genS, opt_discS, opt_private_di
             dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
 
         os.makedirs(dirname, exist_ok=True)
-        for i in range(args.N_splits):
-            torch.save(genS[i].state_dict(), os.path.join(dirname, f"gen{i}.pth") )
-            torch.save(discS[i].state_dict(), os.path.join(dirname, f"disc{i}.pth") )
+        torch.save(genS.state_dict(), os.path.join(dirname, f"gen.pth") )
+        torch.save(discS.state_dict(), os.path.join(dirname, f"disc.pth") )
         torch.save(private_disc.state_dict(), os.path.join(dirname, "private_disc.pth"))
 
 
@@ -365,8 +344,6 @@ def update_args(args, config_dict):
 
 
 if __name__ == '__main__':
-
-    args.local_config= 'gan_models/dcgan/dcgan_config.yaml'
 
     if args.local_config is not None:
 
