@@ -19,7 +19,7 @@ def plot_roc(pos_results, neg_results):
     ap = metrics.average_precision_score(labels, results)
     
     result_array = np.zeros_like(results)
-    result_array[results > -0.2] = 1
+    result_array[results > -0.5] = 1
     precision = metrics.precision_score(labels, result_array)
     
     return fpr, tpr, threshold, auc, ap, precision
