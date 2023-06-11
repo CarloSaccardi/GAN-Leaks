@@ -203,6 +203,25 @@ class PrivateDiscriminator(nn.Module):
         out = self.minibatch_std(out)
         return self.final_block(out).view(x.shape[0], -1)
     
+
+class stackGenerators(nn.Module):
+    def __init__(self, z_dim, in_channels, img_channels, num_generators):
+        super(stackGenerators, self).__init__()
+        self.num_generators = num_generators
+        self.generators = nn.ModuleList([Generator(z_dim, in_channels, img_channels) for i in range(num_generators)])
+
+    def forward(self, x, steps, alpha, i):
+        return self.generators[i](x, steps, alpha)
+    
+class stackDiscriminators(nn.Module):
+    def __init__(self, in_channels, img_channels, num_discriminators):
+        super(stackDiscriminators, self).__init__()
+        self.num_discriminators = num_discriminators
+        self.discriminators = nn.ModuleList([Discriminator(in_channels, img_channels) for i in range(num_discriminators)])
+
+    def forward(self, x, steps, alpha, i):
+        return self.discriminators[i](x, steps, alpha)
+    
     
 if __name__ == '__main__':
     z_dim = 512

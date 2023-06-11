@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from math import log2
 import torchvision
+from torch.utils.data import TensorDataset
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
@@ -15,11 +16,10 @@ import warnings
 import yaml
 import datetime
 import math
-from PIL import Image
-from torch.utils.data import Subset 
+import itertools
 
-from model_torch import Generator, Discriminator, PrivateDiscriminator
-from utils import gradient_penalty, CustomDataset
+from model_torch import PrivateDiscriminator, stackDiscriminators, stackGenerators
+from utils import gradient_penalty, CustomDataset, MySubDataset, MyDataLoader
 
 
 parser = argparse.ArgumentParser()
@@ -97,37 +97,30 @@ def get_loader(imge_size):
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
     ####################### SPLIT DATASET ############################
-    X = []
+    assert len(dataset) % args.N_splits == 0, "Dataset size must be divisible by N_splits"
     t = len(dataset)//args.N_splits
-    y_train = []
+    lables = [[i]*t for i in range(args.N_splits)]
+    lables = list(itertools.chain.from_iterable(lables))
+    dataset.labels = torch.tensor(lables)
     X_loaders = []
-
     for i in range(args.N_splits):
-        if i<args.N_splits-1:
-            dataset_split = Subset(dataset, range(i*t, (i+1)*t))
-            X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size[0], shuffle=False)]
-            X += [dataset_split]
-            y_train += [i]*t
-        else:
-            dataset_split = Subset(dataset, range(i*t, len(dataset)))
-            X += [dataset_split]
-            X_loaders += [torch.utils.data.DataLoader(dataset_split, batch_size=args.batch_size[0], shuffle=False)]
-            y_train += [i]*(len(dataset)-i*t)
+        filtered_dataset = [(data, label) for data, label in dataset if label == i]
+        filtered_dataset = MySubDataset(filtered_dataset)
+        X_loaders.append(MyDataLoader(filtered_dataset, batch_size=batch_size, shuffle=True))
 
-    y_train = np.array(y_train) + 0.0 
-
-    return X_loaders, X, y_train, loader
+    return X_loaders, dataset, loader, t
+    
 
 
-def train_fn_pretrain(private_critic, step_pretrain, alpha, opt_private_critic, loss_fn, loader, y_train):
+
+def train_fn_pretrain(private_critic, step_pretrain, alpha, opt_private_critic, loss_fn, loader):
     
     loop = tqdm(loader, leave=True)
-    for i, (real) in enumerate(loop):
+    for i, (real, labels) in enumerate(loop):
         
         real = real.to(device)
+        lables = labels.to(device)
         cur_batch_size = real.shape[0]
-        lables = y_train[i*cur_batch_size:(i+1)*cur_batch_size]
-        lables = torch.tensor(lables).type(torch.LongTensor).to(device)
                     
         opt_private_critic.zero_grad()
         output = private_critic(real, step_pretrain, alpha)
@@ -145,8 +138,8 @@ def train_fn_pretrain(private_critic, step_pretrain, alpha, opt_private_critic, 
     return loss_critic, alpha
 
 
-def train_fn(critic, 
-             gen, 
+def train_fn(criticS, 
+             genS, 
              private_critic, 
              step, alpha, 
              opt_critic, 
@@ -155,74 +148,119 @@ def train_fn(critic,
              scaler_critic, 
              scaler_gen, 
              loss_fn, 
-             loader, 
-             split, 
-             gen_y):
+             X_loaders,
+             t,
+             batch_size):
     
-    loop = tqdm(loader, leave=True)
-    for i, (real) in enumerate(loop):
+
+    batchCount = int(t // batch_size) + 1
+
+    labels_list = [[] for _ in range(args.N_splits)]
+    noise_list = [[] for _ in range(args.N_splits)]
+    fake_list = [[] for _ in range(args.N_splits)]
+
+    alpha_private =  alpha_critic = alpha_gen = alpha
+
+    for j in range(batchCount):
         
-        real = real.to(device)
-        cur_batch_size = real.shape[0]
-         
-        #train critic--> max ( E[critic(real)] - E[critic(fake)] ) --> min ( - E[critic(real)] + E[critic(fake)] )
-        noise = torch.randn(cur_batch_size, args.nz, 1, 1).to(device)
-        
-        with torch.cuda.amp.autocast():
-            fake = gen(noise, step, alpha)
-            critic_real = critic(real,  step, alpha)
-            critic_fake = critic(fake.detach(), step, alpha)
-            
-            gp = gradient_penalty(critic, real, fake, alpha, step, device)
-            loss_critic = (
-                -(torch.mean(critic_real) - torch.mean(critic_fake)) 
-                + args.lambda_gp * gp
-                + (0.001 * torch.mean(critic_real ** 2))
-               )
-             
         opt_critic.zero_grad()
-        scaler_critic.scale(loss_critic).backward() #retain_graph=True to be able to backprop the generator
+
+        for split in range(args.N_splits):
+
+
+            loader = [ (i, (imgs, labels)) for i, (imgs, labels) in enumerate(X_loaders[split])]
+            i, (real, labels) = loader[j]
+        
+            real = real.to(device)
+            labels = labels.to(device)
+            
+            #train critic--> max ( E[critic(real)] - E[critic(fake)] ) --> min ( - E[critic(real)] + E[critic(fake)] )
+            noise = torch.randn(real.shape[0], args.nz, 1, 1).to(device)
+            
+            with torch.cuda.amp.autocast():
+                fake = genS(noise, step, alpha_critic, split)
+                critic_real = criticS(real,  step, alpha_critic, split)
+                critic_fake = criticS(fake.detach(), step, alpha_critic, split)
+                
+                gp = gradient_penalty(criticS, real, fake, alpha_critic, step, split, device)
+                loss_critic = (
+                    -(torch.mean(critic_real) - torch.mean(critic_fake)) 
+                    + args.lambda_gp * gp
+                    + (0.001 * torch.mean(critic_real ** 2))
+                )
+                
+            labels_list[split].append(labels)
+            noise_list[split].append(noise)
+            fake_list[split].append(fake)
+
+            scaler_critic.scale(loss_critic).backward() #retain_graph=True to be able to backprop the generator
+
         scaler_critic.step(opt_critic)
         scaler_critic.update()
 
-        #train private discriminator if resolution is at least 32
-        if 4*2**step >= args.dp_delay:
-            output = private_critic(fake, step, alpha).reshape(-1, args.N_splits)
-            labels_Dp = torch.tensor([split]*real.shape[0], dtype=torch.float32).type(torch.LongTensor).to(device)
+        alpha_critic += real.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
+        alpha_critic = min(alpha, 1)
 
-            loss_Dp = loss_fn(output, labels_Dp)
+
+    #train private discriminator if resolution is at least 32
+    if 4*2**step >= args.dp_delay:
+
+        fake_tensor = torch.cat([element for inner_list in fake_list for element in inner_list], dim=0)
+        labels_tensor = torch.cat([element for inner_list in labels_list for element in inner_list], dim=0)
+        dataset = TensorDataset(fake_tensor, labels_tensor)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        for i, (fake, labels) in enumerate(loader):
+
+            output = private_critic(fake.detach(), step, alpha_private).reshape(-1, args.N_splits)
+
+            loss_Dp = loss_fn(output, labels)
 
             private_critic.zero_grad()
             loss_Dp.backward()
 
             opt_private_critic.step()
+
+            alpha_private += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset))
+            alpha_private = min(alpha_private, 1)
          
         #train generator--> max E[critic(gen_fake)] --> min -E[critic(gen_fake)]
 
-        with torch.cuda.amp.autocast():
-            output1 = critic(fake, step, alpha)
-            output2 = private_critic(fake, step, alpha).reshape(-1, args.N_splits)
-            labels_gen = gen_y[i*real.shape[0]:(i+1)*real.shape[0]]
+    for j in range(batchCount):
 
-            lossG1 = -torch.mean(output1)
-            lossG2 = -args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
-            loss_gen = lossG1 + lossG2
-
-           
         opt_gen.zero_grad()
-        scaler_gen.scale(loss_gen).backward()
+
+        for split in range(args.N_splits):
+
+            noise = noise_list[split][j]
+            fake = genS(noise, step, alpha_gen, split)
+
+            l = list(range(args.N_splits))
+            del(l[split])
+            labels_gen =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
+
+            with torch.cuda.amp.autocast():
+                output1 = criticS(fake, step, alpha, split)
+                output2 = private_critic(fake, step, alpha).reshape(-1, args.N_splits)
+
+                lossG1 = -torch.mean(output1)
+                lossG2 = -args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
+                loss_gen = lossG1 + lossG2
+
+            
+            scaler_gen.scale(loss_gen).backward()
+
         scaler_gen.step(opt_gen)
         scaler_gen.update()
         
-        alpha += cur_batch_size / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(loader.dataset)) 
+        alpha += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
         alpha = min(alpha, 1)
 
-        loop.set_postfix(
-            gp=gp.item(),
-            loss_critic=loss_critic.item(),
-        )
-        
-    return loss_critic, loss_gen, alpha
+    if 4*2**step >= args.dp_delay:
+        return loss_critic, loss_gen, loss_Dp
+    else:
+        return loss_critic, loss_gen, 0
+    
 
 
 def main():
@@ -236,13 +274,13 @@ def main():
 
     if args.training:
 
-        gen = Generator(args.nz, args.in_channels, args.nc).to(device)
-        critic = Discriminator(args.in_channels, args.nc).to(device)
+        genS = stackGenerators(args.nz, args.in_channels, args.nc, args.N_splits).to(device)
+        criticS = stackDiscriminators(args.in_channels, args.nc, args.N_splits).to(device)
         private_critic = PrivateDiscriminator(args.in_channels, args.N_splits, args.nc).to(device)
         
         #initilize optimizers and scalers for FP16 training
-        opt_gen = torch.optim.Adam(gen.parameters(), lr=args.lr, betas=(0.0, 0.99))
-        opt_critic = torch.optim.Adam(critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
+        opt_gen = torch.optim.Adam(genS.parameters(), lr=args.lr, betas=(0.0, 0.99))
+        opt_critic = torch.optim.Adam(criticS.parameters(), lr=args.lr, betas=(0.0, 0.99))
         opt_private_critic = torch.optim.Adam(private_critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
         scaler_gen = torch.cuda.amp.GradScaler()
         scaler_critic = torch.cuda.amp.GradScaler()
@@ -255,7 +293,7 @@ def main():
 
             for num_epochs in pretrain_disc_epochs[step_pretrain:]:
                 alpha = 1e-5 #increase to 1 over the course of the epoch
-                _, _, y_train, loader = get_loader(4*2**step_pretrain)
+                _, _, loader, _ = get_loader(4*2**step_pretrain)
                 print(f"image resolution: {4*2**step_pretrain}x{4*2**step_pretrain}")
 
                 for epoch in range(num_epochs):
@@ -265,8 +303,7 @@ def main():
                                                             alpha, 
                                                             opt_private_critic,  
                                                             loss_fn, 
-                                                            loader,
-                                                            y_train)
+                                                            loader)
 
                     #print the losses for every epoch
                     print("pre-train private discriminator loss: ", loss_CRITIC.item(), "epoch: ", epoch)
@@ -277,45 +314,37 @@ def main():
 
             ####################### TRAIN privPGGAN ############################
 
-            gen.train()
-            critic.train()
+            genS.train()
+            criticS.train()
             step = int(log2(args.start_img_size / 4))
-            genS = [gen]*args.N_splits
-            criticS = [critic]*args.N_splits
 
             for num_epochs in PROGRESSIVE_EPOCHS[step:]:
                 alpha = 1e-5 #increase to 1 over the course of the epoch
-                X_loaders, X, y_train, loader = get_loader(4*2**step)
+                X_loaders, _, loader, t = get_loader(4*2**step)
                 print(f"image resolution: {4*2**step}x{4*2**step}")
+
+                batch_size = args.batch_size[int(log2(4*2**step) / 4)]
 
                 for epoch in range(num_epochs):
 
-                    #for each dataloader in dataloader_N, train the discriminator
-                    for split in range(args.N_splits):
-
-                        l = list(range(args.N_splits))
-                        del(l[split])
-                        gen_y =  np.random.choice( l, ( len( X[split] ) , ) )
-                        gen_y = torch.tensor(gen_y, dtype=torch.float32).to(device)
-
-                        loss_CRITIC, loss_GEN, alpha = train_fn(
-                                                                criticS[split], 
-                                                                genS[split],
-                                                                private_critic, 
-                                                                step, 
-                                                                alpha, 
-                                                                opt_critic, 
-                                                                opt_gen, 
-                                                                opt_private_critic,
-                                                                scaler_critic, 
-                                                                scaler_gen, 
-                                                                loss_fn,
-                                                                X_loaders[split],
-                                                                split,
-                                                                gen_y
-                                                                )
-                        ##print losses, epoch and split
-                        print("discriminator loss: ", loss_CRITIC.item(), "generator loss: ", loss_GEN.item(), "epoch: ", epoch)
+                    loss_CRITIC, loss_GEN, loss_DP = train_fn(
+                                                            criticS, 
+                                                            genS,
+                                                            private_critic, 
+                                                            step, 
+                                                            alpha, 
+                                                            opt_critic, 
+                                                            opt_gen, 
+                                                            opt_private_critic,
+                                                            scaler_critic, 
+                                                            scaler_gen, 
+                                                            loss_fn,
+                                                            X_loaders,
+                                                            t,
+                                                            batch_size)
+                    ##print losses, epoch and split
+                    loss_DP = loss_DP.item() if loss_DP != 0 else "N/A"
+                    print("discriminator loss: ", loss_CRITIC.item(), "DP loss: ", loss_DP, "generator loss: ", loss_GEN.item(),"epoch: ", epoch)
 
                     
                 step += 1
@@ -334,14 +363,14 @@ def main():
     if args.generate:
         #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
 
-        gen = Generator(args.nz, args.in_channels, args.nc).to(device)
+        gen = stackGenerators(args.nz, args.in_channels, args.nc, args.N_splits).to(device)
 
         if args.training:
-            gen.load_state_dict(torch.load(os.path.join(dirname, "gen0.pth")))
+            gen.load_state_dict(torch.load(os.path.join(dirname, "gen.pth")))
         else:
             assert args.saved_model_name is not None, "Please specify the saved model name"
             assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
-            gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen0.pth")))
+            gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen.pth")))
         
         gen.eval()
 
@@ -361,7 +390,7 @@ def main():
                 normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
                 to_pil = transforms.ToPILImage()
 
-                batch_fake = gen(batch_noise, 4, 1).detach().cpu()
+                batch_fake = gen(batch_noise, 4, 1, 0).detach().cpu()
                 batch_fake = normalize(batch_fake)
                
                 noise[batch_start:batch_end] = batch_noise

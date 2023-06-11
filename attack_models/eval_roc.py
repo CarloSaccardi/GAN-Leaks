@@ -19,7 +19,7 @@ def plot_roc(pos_results, neg_results):
     ap = metrics.average_precision_score(labels, results)
     
     result_array = np.zeros_like(results)
-    result_array[results > -0.5] = 1
+    result_array[results > -0.17] = 1
     precision = metrics.precision_score(labels, result_array)
     
     return fpr, tpr, threshold, auc, ap, precision
@@ -71,7 +71,7 @@ def main():
         pos_loss = np.load(os.path.join(result_load_dir, 'pos_loss.npy')).flatten()
         neg_loss = np.load(os.path.join(result_load_dir, 'neg_loss.npy')).flatten()
 
-    #idx = np.nonzero(pos_loss < 0.20)[0]
+    #idx = np.nonzero(pos_loss < 0.2)[0]
     #pos_loss = pos_loss[idx]
     #neg_loss = neg_loss[idx]
     ### plot roc curve
