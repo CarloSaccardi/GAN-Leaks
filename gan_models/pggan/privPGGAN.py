@@ -106,7 +106,7 @@ def get_loader(imge_size):
     for i in range(args.N_splits):
         filtered_dataset = [(data, label) for data, label in dataset if label == i]
         filtered_dataset = MySubDataset(filtered_dataset)
-        X_loaders.append(MyDataLoader(filtered_dataset, batch_size=batch_size, shuffle=True))
+        X_loaders.append(DataLoader(filtered_dataset, batch_size=batch_size, shuffle=True))
 
     return X_loaders, dataset, loader, t
     
@@ -141,138 +141,98 @@ def train_fn_pretrain(private_critic, step_pretrain, alpha, opt_private_critic, 
 def train_fn(criticS, 
              genS, 
              private_critic, 
-             step, alpha_critic, alpha_gen, alpha_private, 
+             step, alpha, 
              opt_critic, 
              opt_gen, 
              opt_private_critic, 
              scaler_critic, 
              scaler_gen, 
              loss_fn, 
-             X_loaders,
-             t,
-             batch_size):
-    
+             loader,
+             split):
 
-    batchCount = int(t // batch_size) + 1 if t % batch_size != 0 else int(t // batch_size)
+    loop = tqdm(loader, leave=True)
+    d_t = torch.zeros(len(loader))
+    g_t = torch.zeros(len(loader))
+    dp_t = torch.zeros(len(loader))
 
-    labels_list = [[] for _ in range(args.N_splits)]
-    noise_list = [[] for _ in range(args.N_splits)]
-    fake_list = [[] for _ in range(args.N_splits)]
+    for i, (real, labels) in enumerate(loop):
 
-    d_t = np.zeros((batchCount, args.N_splits))
-    dp_t = np.zeros(batchCount*2)
-    g_t = np.zeros((batchCount, args.N_splits))
-
-    for j in range(batchCount):
+        real = real.to(device)
+        labels = labels.to(device)
+        
+        #train critic--> max ( E[critic(real)] - E[critic(fake)] ) --> min ( - E[critic(real)] + E[critic(fake)] )
+        noise = torch.randn(real.shape[0], args.nz, 1, 1).to(device)
+        
+        with torch.cuda.amp.autocast():
+            fake = genS(noise, step, alpha, split)
+            critic_real = criticS(real,  step, alpha, split)
+            critic_fake = criticS(fake.detach(), step, alpha, split)
+            
+            gp = gradient_penalty(criticS, real, fake, alpha, step, split, device)
+            loss_critic = (
+                -(torch.mean(critic_real) - torch.mean(critic_fake)) 
+                + args.lambda_gp * gp
+                + (0.001 * torch.mean(critic_real ** 2))
+            )
 
         opt_critic.zero_grad()
-
-        for split in range(args.N_splits):
-
-
-            loader = [ (i, (imgs, labels)) for i, (imgs, labels) in enumerate(X_loaders[split])]
-            i, (real, labels) = loader[j]
-        
-            real = real.to(device)
-            labels = labels.to(device)
-            
-            #train critic--> max ( E[critic(real)] - E[critic(fake)] ) --> min ( - E[critic(real)] + E[critic(fake)] )
-            noise = torch.randn(real.shape[0], args.nz, 1, 1).to(device)
-            
-            with torch.cuda.amp.autocast():
-                fake = genS(noise, step, alpha_critic, split)
-                critic_real = criticS(real,  step, alpha_critic, split)
-                critic_fake = criticS(fake.detach(), step, alpha_critic, split)
-                
-                gp = gradient_penalty(criticS, real, fake, alpha_critic, step, split, device)
-                loss_critic = (
-                    -(torch.mean(critic_real) - torch.mean(critic_fake)) 
-                    + args.lambda_gp * gp
-                    + (0.001 * torch.mean(critic_real ** 2))
-                )
-                
-            labels_list[split].append(labels)
-            noise_list[split].append(noise)
-            fake_list[split].append(fake)
-
-            scaler_critic.scale(loss_critic).backward() #retain_graph=True to be able to backprop the generator
-
-            d_t[j, split] = loss_critic.item()
-
+        scaler_critic.scale(loss_critic).backward() #retain_graph=True to be able to backprop the generator
         scaler_critic.step(opt_critic)
         scaler_critic.update()
 
-        alpha_critic += real.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
-        alpha_critic = min(alpha_critic, 1)
-
+        d_t[i] = loss_critic.item()
 
     #train private discriminator if resolution is at least 32
-    if 4*2**step >= args.dp_delay:
+        if 4*2**step >= args.dp_delay:
 
-        fake_tensor = torch.cat([element for inner_list in fake_list for element in inner_list], dim=0)
-        labels_tensor = torch.cat([element for inner_list in labels_list for element in inner_list], dim=0)
-        dataset = TensorDataset(fake_tensor, labels_tensor)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-        for i, (fake, labels) in enumerate(loader):
-
-            output = private_critic(fake.detach(), step, alpha_private).reshape(-1, args.N_splits)
+            output = private_critic(fake.detach(), step, alpha).reshape(-1, args.N_splits)
 
             loss_Dp = loss_fn(output, labels)
 
             private_critic.zero_grad()
             loss_Dp.backward()
-
             opt_private_critic.step()
 
             dp_t[i] = loss_Dp.item()
-
-            alpha_private += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset))
-            alpha_private = min(alpha_private, 1)
          
-    #train generator--> max E[critic(gen_fake)] --> min -E[critic(gen_fake)]
+        #train generator--> max E[critic(gen_fake)] --> min -E[critic(gen_fake)]
 
-    for j in range(batchCount):
+        l = list(range(args.N_splits))
+        del(l[split])
+        labels_gen =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
+
+        with torch.cuda.amp.autocast():
+            output1 = criticS(fake, step, alpha, split)
+            output2 = private_critic(fake, step, alpha).reshape(-1, args.N_splits)
+
+            lossG1 = -torch.mean(output1)
+            lossG2 =  args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
+            loss_gen = lossG1 + lossG2
 
         opt_gen.zero_grad()
-
-        for split in range(args.N_splits):
-
-            noise = noise_list[split][j]
-            fake = genS(noise, step, alpha_gen, split)
-
-            l = list(range(args.N_splits))
-            del(l[split])
-            labels_gen =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
-
-            with torch.cuda.amp.autocast():
-                output1 = criticS(fake, step, alpha_gen, split)
-                output2 = private_critic(fake, step, alpha_gen).reshape(-1, args.N_splits)
-
-                lossG1 = -torch.mean(output1)
-                lossG2 =  -args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
-                loss_gen = lossG1 + lossG2
-
-            scaler_gen.scale(loss_gen).backward()
-
-            g_t[j, split] = loss_gen.item()
-
+        scaler_gen.scale(loss_gen).backward()
         scaler_gen.step(opt_gen)
         scaler_gen.update()
+
+        g_t[i] = loss_gen.item()
         
-        alpha_gen += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
-        alpha_gen = min(alpha_gen, 1)
+        alpha += real.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(loader.dataset)) 
+        alpha = min(alpha, 1)
+
+        loop.set_postfix(
+            gp=gp.item(),
+            loss_critic=loss_critic.item(),
+        )
 
     with torch.no_grad():
         #lossd and lossG has to be summed over the splits and then averaged over the batches
-        loss_critic = d_t.sum(axis=1).mean()
-        loss_Dp = dp_t.mean() if 4*2**step >= args.dp_delay else "N/A"
-        loss_gen = g_t.sum(axis=1).mean()
+        loss_critic = d_t.mean()
+        loss_Dp = dp_t.mean() if 4*2**step >= args.dp_delay else 0
+        loss_gen = g_t.mean()
 
-    if 4*2**step >= args.dp_delay:
-        return loss_critic, loss_gen, loss_Dp, alpha_critic, alpha_gen, alpha_private
-    else:
-        return loss_critic, loss_gen, 0, alpha_critic, alpha_gen, alpha_private
+    return loss_critic, loss_gen, loss_Dp, alpha
+
     
 
 
@@ -332,33 +292,44 @@ def main():
             step = int(log2(args.start_img_size / 4))
 
             for num_epochs in PROGRESSIVE_EPOCHS[step:]:
-                alpha_critic = alpha_gen = alpha_private = 1e-5 #increase to 1 over the course of the epoch
+                alpha = 1e-5 #increase to 1 over the course of the epoch
                 X_loaders, _, loader, t = get_loader(4*2**step)
                 print(f"image resolution: {4*2**step}x{4*2**step}")
 
                 batch_size = args.batch_size[int(log2(4*2**step) / 4)]
 
                 for epoch in range(num_epochs):
+                    
+                    loss_CRITIC_list = []
+                    loss_GEN_list = []
+                    loss_DP_list = []
 
-                    loss_CRITIC, loss_GEN, loss_DP, alpha_critic, alpha_gen, alpha_private  = train_fn(
-                                                                                                    criticS, 
-                                                                                                    genS,
-                                                                                                    private_critic, 
-                                                                                                    step, 
-                                                                                                    alpha_critic, 
-                                                                                                    alpha_gen, 
-                                                                                                    alpha_private, 
-                                                                                                    opt_critic, 
-                                                                                                    opt_gen, 
-                                                                                                    opt_private_critic,
-                                                                                                    scaler_critic, 
-                                                                                                    scaler_gen, 
-                                                                                                    loss_fn,
-                                                                                                    X_loaders,
-                                                                                                    t,
-                                                                                                    batch_size)
-                    ##print losses, epoch and split
-                    print("discriminator loss: ", loss_CRITIC.item(), "DP loss: ", loss_DP, "generator loss: ", loss_GEN.item(),"epoch: ", epoch)
+                    for split in range(args.N_splits):
+
+                        loss_CRITIC, loss_GEN, loss_DP, alpha = train_fn(
+                                                                        criticS, 
+                                                                        genS,
+                                                                        private_critic, 
+                                                                        step, 
+                                                                        alpha,
+                                                                        opt_critic, 
+                                                                        opt_gen, 
+                                                                        opt_private_critic,
+                                                                        scaler_critic, 
+                                                                        scaler_gen, 
+                                                                        loss_fn,
+                                                                        X_loaders[split],
+                                                                        split)
+                        loss_CRITIC_list.append(loss_CRITIC)
+                        loss_GEN_list.append(loss_GEN)
+                        loss_DP_list.append(loss_DP)
+                    
+                    with torch.no_grad():
+                        loss_CRITIC = sum(loss_CRITIC_list)/len(loss_CRITIC_list)
+                        loss_GEN = sum(loss_GEN_list)/len(loss_GEN_list)
+                        loss_DP = sum(loss_DP_list)/len(loss_DP_list)
+                            ##print losses, epoch and split
+                        print("discriminator loss: ", loss_CRITIC.item(), "DP loss: ", loss_DP, "generator loss: ", loss_GEN.item(),"epoch: ", epoch)
 
                     
                 step += 1
@@ -369,9 +340,8 @@ def main():
             dirname = os.path.join(args.PATH, timestamp)
 
             os.makedirs(dirname, exist_ok=True)
-            for i in range(args.N_splits):
-                torch.save(genS[i].state_dict(), os.path.join(dirname, f"gen{i}.pth") )
-                torch.save(criticS[i].state_dict(), os.path.join(dirname, f"critic{i}.pth") )
+            torch.save(genS.state_dict(), os.path.join(dirname, f"gen.pth") )
+            torch.save(criticS.state_dict(), os.path.join(dirname, f"critic.pth") )
             torch.save(private_critic.state_dict(), os.path.join(dirname, "private_critic.pth"))
 
     if args.generate:

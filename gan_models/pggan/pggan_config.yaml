@@ -2,7 +2,7 @@ data_path: data/train
 training: True
 generate: True
 num_generated: 2040
-num_epochs: 2 #50 
+num_epochs: 30 #50 
 batch_size: [32, 32, 32, 32, 32]
 lr: 0.001
 image_size: 64
@@ -12,6 +12,6 @@ in_channels: 512
 
 ##privPGGAN parameters
 N_splits: 2
-privacy_ratio: 1
-disc_epochs: 0
+privacy_ratio: 5
+disc_epochs: 20
 dp_delay: 16
