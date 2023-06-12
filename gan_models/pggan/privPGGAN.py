@@ -19,7 +19,7 @@ import math
 import itertools
 
 from model_torch import PrivateDiscriminator, stackDiscriminators, stackGenerators
-from utils import gradient_penalty, CustomDataset, MySubDataset, MyDataLoader
+from utils import gradient_penalty, CustomDatasetWithLabels, MySubDataset, MyDataLoader
 
 
 parser = argparse.ArgumentParser()
@@ -65,7 +65,7 @@ def update_args(args, config_dict):
         setattr(args, key, val)  
 
 
-#args.local_config='gan_models/pggan/pggan_config.yaml'
+args.local_config='gan_models/pggan/pggan_config.yaml'
 if args.local_config is not None:
     with open(str(args.local_config), "r") as f:
         config = yaml.safe_load(f)
@@ -93,7 +93,7 @@ def get_loader(imge_size):
     ])
     
     batch_size = args.batch_size[int(log2(imge_size) / 4)]
-    dataset = CustomDataset(root=  args.data_path, transform=transform)
+    dataset = CustomDatasetWithLabels(root=  args.data_path, transform=transform)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
     ####################### SPLIT DATASET ############################
@@ -141,7 +141,7 @@ def train_fn_pretrain(private_critic, step_pretrain, alpha, opt_private_critic, 
 def train_fn(criticS, 
              genS, 
              private_critic, 
-             step, alpha, 
+             step, alpha_critic, alpha_gen, alpha_private, 
              opt_critic, 
              opt_gen, 
              opt_private_critic, 
@@ -153,16 +153,18 @@ def train_fn(criticS,
              batch_size):
     
 
-    batchCount = int(t // batch_size) + 1
+    batchCount = int(t // batch_size) + 1 if t % batch_size != 0 else int(t // batch_size)
 
     labels_list = [[] for _ in range(args.N_splits)]
     noise_list = [[] for _ in range(args.N_splits)]
     fake_list = [[] for _ in range(args.N_splits)]
 
-    alpha_private =  alpha_critic = alpha_gen = alpha
+    d_t = np.zeros((batchCount, args.N_splits))
+    dp_t = np.zeros(batchCount*2)
+    g_t = np.zeros((batchCount, args.N_splits))
 
     for j in range(batchCount):
-        
+
         opt_critic.zero_grad()
 
         for split in range(args.N_splits):
@@ -195,11 +197,13 @@ def train_fn(criticS,
 
             scaler_critic.scale(loss_critic).backward() #retain_graph=True to be able to backprop the generator
 
+            d_t[j, split] = loss_critic.item()
+
         scaler_critic.step(opt_critic)
         scaler_critic.update()
 
         alpha_critic += real.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
-        alpha_critic = min(alpha, 1)
+        alpha_critic = min(alpha_critic, 1)
 
 
     #train private discriminator if resolution is at least 32
@@ -221,10 +225,12 @@ def train_fn(criticS,
 
             opt_private_critic.step()
 
+            dp_t[i] = loss_Dp.item()
+
             alpha_private += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset))
             alpha_private = min(alpha_private, 1)
          
-        #train generator--> max E[critic(gen_fake)] --> min -E[critic(gen_fake)]
+    #train generator--> max E[critic(gen_fake)] --> min -E[critic(gen_fake)]
 
     for j in range(batchCount):
 
@@ -240,26 +246,33 @@ def train_fn(criticS,
             labels_gen =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
 
             with torch.cuda.amp.autocast():
-                output1 = criticS(fake, step, alpha, split)
-                output2 = private_critic(fake, step, alpha).reshape(-1, args.N_splits)
+                output1 = criticS(fake, step, alpha_gen, split)
+                output2 = private_critic(fake, step, alpha_gen).reshape(-1, args.N_splits)
 
                 lossG1 = -torch.mean(output1)
-                lossG2 = -args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
+                lossG2 =  -args.privacy_ratio * loss_fn(output2, labels_gen.type(torch.LongTensor).to(device))
                 loss_gen = lossG1 + lossG2
 
-            
             scaler_gen.scale(loss_gen).backward()
+
+            g_t[j, split] = loss_gen.item()
 
         scaler_gen.step(opt_gen)
         scaler_gen.update()
         
-        alpha += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
-        alpha = min(alpha, 1)
+        alpha_gen += fake.shape[0] / ((PROGRESSIVE_EPOCHS[step] * 0.5) * len(X_loaders[-1].dataset)) 
+        alpha_gen = min(alpha_gen, 1)
+
+    with torch.no_grad():
+        #lossd and lossG has to be summed over the splits and then averaged over the batches
+        loss_critic = d_t.sum(axis=1).mean()
+        loss_Dp = dp_t.mean() if 4*2**step >= args.dp_delay else "N/A"
+        loss_gen = g_t.sum(axis=1).mean()
 
     if 4*2**step >= args.dp_delay:
-        return loss_critic, loss_gen, loss_Dp
+        return loss_critic, loss_gen, loss_Dp, alpha_critic, alpha_gen, alpha_private
     else:
-        return loss_critic, loss_gen, 0
+        return loss_critic, loss_gen, 0, alpha_critic, alpha_gen, alpha_private
     
 
 
@@ -319,7 +332,7 @@ def main():
             step = int(log2(args.start_img_size / 4))
 
             for num_epochs in PROGRESSIVE_EPOCHS[step:]:
-                alpha = 1e-5 #increase to 1 over the course of the epoch
+                alpha_critic = alpha_gen = alpha_private = 1e-5 #increase to 1 over the course of the epoch
                 X_loaders, _, loader, t = get_loader(4*2**step)
                 print(f"image resolution: {4*2**step}x{4*2**step}")
 
@@ -327,23 +340,24 @@ def main():
 
                 for epoch in range(num_epochs):
 
-                    loss_CRITIC, loss_GEN, loss_DP = train_fn(
-                                                            criticS, 
-                                                            genS,
-                                                            private_critic, 
-                                                            step, 
-                                                            alpha, 
-                                                            opt_critic, 
-                                                            opt_gen, 
-                                                            opt_private_critic,
-                                                            scaler_critic, 
-                                                            scaler_gen, 
-                                                            loss_fn,
-                                                            X_loaders,
-                                                            t,
-                                                            batch_size)
+                    loss_CRITIC, loss_GEN, loss_DP, alpha_critic, alpha_gen, alpha_private  = train_fn(
+                                                                                                    criticS, 
+                                                                                                    genS,
+                                                                                                    private_critic, 
+                                                                                                    step, 
+                                                                                                    alpha_critic, 
+                                                                                                    alpha_gen, 
+                                                                                                    alpha_private, 
+                                                                                                    opt_critic, 
+                                                                                                    opt_gen, 
+                                                                                                    opt_private_critic,
+                                                                                                    scaler_critic, 
+                                                                                                    scaler_gen, 
+                                                                                                    loss_fn,
+                                                                                                    X_loaders,
+                                                                                                    t,
+                                                                                                    batch_size)
                     ##print losses, epoch and split
-                    loss_DP = loss_DP.item() if loss_DP != 0 else "N/A"
                     print("discriminator loss: ", loss_CRITIC.item(), "DP loss: ", loss_DP, "generator loss: ", loss_GEN.item(),"epoch: ", epoch)
 
                     
