@@ -90,10 +90,6 @@ def main():
             exp = experiments[i]#take the i-th combination of hyperparameters
             update_args(args, exp)#update args with the hyperparameters
             args.params_values = '-'.join([str(v) for v in exp.values()])#string of hyperparameters values 
-
-        if args.wandb: 
-            wandb_config = vars(args)
-            wandb.init(project=str(args.wandb), entity="thesis_carlo", config=wandb_config) 
             
 
         print(args)
@@ -196,9 +192,15 @@ def main():
             fake = gen(noise, 0).detach().cpu()
             fake = normalize(fake)
 
-            dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
-            dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
-            dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+            if args.params_keys is None:
+                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', timestamp)
+                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', timestamp)
+                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', timestamp)
+            else:
+                dirname_npz_images = os.path.join(args.PATH_syn_data , 'npz_images', args.params_keys, args.params_values)
+                dirname_npz_noise = os.path.join(args.PATH_syn_data , 'npz_noise', args.params_keys, args.params_values)
+                dirname_png_images = os.path.join(args.PATH_syn_data , 'png_images', args.params_keys, args.params_values)
+
 
             os.makedirs(dirname_npz_images, exist_ok=True)
             np.savez(os.path.join(dirname_npz_images, "dcgan_synthetic_data.npz"), fake=fake)
@@ -217,12 +219,12 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
     #set detect anomaly to true
     torch.autograd.set_detect_anomaly(True)
     #train generator and discriminator for gen_epochs
-    batchCount = int(t // args.batch_size) + 1
+    batchCount = int(t // args.batch_size) + 1 if t % args.batch_size != 0 else int(t // args.batch_size)
 
     for epoch in range(args.num_epochs):
 
         d_t = np.zeros((batchCount, args.N_splits))
-        dp_t = np.zeros(batchCount*2)
+        dp_t = np.zeros(batchCount*args.N_splits)
         g_t = np.zeros((batchCount, args.N_splits))
 
         labels_list = [[] for _ in range(args.N_splits)]

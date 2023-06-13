@@ -32,6 +32,8 @@ def parse_arguments():
     parser.add_argument('--K', type=int, default=5)
     parser.add_argument('--BATCH_SIZE', type=int, default=30)
     parser.add_argument('--local_config', type=str, default=None)
+    parser.add_argument('--hyperparameter_search',  default=False, help='tune hyperparameters')
+    parser.add_argument('--params', type=str, default=None, help='hyperparameters to tune')
     parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
     return parser.parse_args()
 
@@ -46,8 +48,14 @@ def check_args(args):
     ## load dir
     assert os.path.exists(args.syn_data_path) 
 
+
     ## set up save_dir
-    save_dir = os.path.join(os.getcwd(), 'fbb_attack', args.exp_name)
+    if args.params is not None and args.hyperparameter_search:
+        subdir = args.syn_data_path
+        exp_name = args.exp_name + '__' + subdir.split('/')[-2] 
+        save_dir = os.path.join(os.getcwd(), 'fbb_attack', exp_name, args.params)
+    else:
+        save_dir = os.path.join(os.getcwd(), 'fbb_attack', args.exp_name)
     check_folder(save_dir)
 
     ## store the parameters
@@ -100,58 +108,75 @@ def plot_closest_images(idx, query_imgs, syn_imgs, save_dir, class_type, num=20)
 #############################################################################################################
 # main
 #############################################################################################################
-def main(args_):
-    args, save_dir = check_args(args_)
-    resolution = args.resolution
+def main(args):
 
-    ### load generated samples
-    syn_data_paths = get_filepaths_from_dir(args.syn_data_path, ext='png')
-    syn_imgs = np.array([read_image(f, resolution) for f in syn_data_paths])
-    syn_imgs = torch.from_numpy(syn_imgs).float().permute(0, 3, 1, 2).to(device)
-
-
-    ### load query images
-    pos_data_paths = get_filepaths_from_dir(args.pos_data_dir, ext='png')
-    pos_query_imgs = np.array([read_image(f, resolution) for f in pos_data_paths])
-    pos_query_imgs = torch.from_numpy(pos_query_imgs).float().permute(0, 3, 1, 2).to(device)
-
-    neg_data_paths = get_filepaths_from_dir(args.neg_data_dir, ext='png')
-    neg_query_imgs = np.array([read_image(f, resolution) for f in neg_data_paths])
-    neg_query_imgs = torch.from_numpy(neg_query_imgs).float().permute(0, 3, 1, 2).to(device)
-
-    ### load the distance function
-    custom_loss = Loss('l2-lpips', if_norm_reg=False)
-
-    pos_loss = []
-    plt_pos_idx = []
-
-    neg_loss = []
-    plt_neg_idx = []
+    #if args.hyperparameter_search then get path of all subdirectories from args.syn_data_path directory
+    if args.hyperparameter_search:
+        subdirs = [os.path.join(args.syn_data_path, o) for o in os.listdir(args.syn_data_path) if os.path.isdir(os.path.join(args.syn_data_path,o))]
     
-    for sample in tqdm(pos_query_imgs):
-        pos_loss_item, plt_pos_idx_item = custom_knn(syn_imgs, sample, custom_loss, args) #find closest positive image
-        pos_loss.append(pos_loss_item)
-        plt_pos_idx.append(plt_pos_idx_item)
-    pos_loss = np.array(pos_loss).reshape(-1, 1)
-    plt_pos_idx = np.array(plt_pos_idx).reshape(-1, 1)
-    save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, np.array([i for i in range(len(pos_loss))]).reshape(-1,1)])
-    
-    
-    for sample in tqdm(neg_query_imgs):    
-        neg_loss_item, plt_neg_idx_item = custom_knn(syn_imgs, sample, custom_loss, args) #find closest negative image
-        neg_loss.append(neg_loss_item)
-        plt_neg_idx.append(plt_neg_idx_item)
-    neg_loss = np.array(neg_loss).reshape(-1, 1)
-    plt_neg_idx = np.array(plt_neg_idx).reshape(-1, 1)
-    save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, np.array([i for i in range(len(pos_loss))]).reshape(-1,1)])
+    else:
+        subdirs = [args.syn_data_path]
 
-    ### positive query
+    for subdir in subdirs:
 
-    plot_closest_images(plt_pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
+        args.syn_data_path = subdir
+        args.params = subdir.split('/')[-1] if args.hyperparameter_search else args.params
+        args, save_dir = check_args(args)
 
-    ### negative query
+        print(args)
+        print('exp_name: ', args.exp_name)
+        print('params: ', args.params)
 
-    plot_closest_images(plt_neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
+        resolution = args.resolution
+
+        ### load generated samples
+        syn_data_paths = get_filepaths_from_dir(subdir, ext='png')
+        syn_imgs = np.array([read_image(f, resolution) for f in syn_data_paths])
+        syn_imgs = torch.from_numpy(syn_imgs).float().permute(0, 3, 1, 2).to(device)
+
+
+        ### load query images
+        pos_data_paths = get_filepaths_from_dir(args.pos_data_dir, ext='png')
+        pos_query_imgs = np.array([read_image(f, resolution) for f in pos_data_paths])
+        pos_query_imgs = torch.from_numpy(pos_query_imgs).float().permute(0, 3, 1, 2).to(device)
+
+        neg_data_paths = get_filepaths_from_dir(args.neg_data_dir, ext='png')
+        neg_query_imgs = np.array([read_image(f, resolution) for f in neg_data_paths])
+        neg_query_imgs = torch.from_numpy(neg_query_imgs).float().permute(0, 3, 1, 2).to(device)
+
+        ### load the distance function
+        custom_loss = Loss('l2-lpips', if_norm_reg=False)
+
+        pos_loss = []
+        plt_pos_idx = []
+
+        neg_loss = []
+        plt_neg_idx = []
+        
+        for sample in tqdm(pos_query_imgs):
+            pos_loss_item, plt_pos_idx_item = custom_knn(syn_imgs, sample, custom_loss, args) #find closest positive image
+            pos_loss.append(pos_loss_item)
+            plt_pos_idx.append(plt_pos_idx_item)
+        pos_loss = np.array(pos_loss).reshape(-1, 1)
+        plt_pos_idx = np.array(plt_pos_idx).reshape(-1, 1)
+        save_files(save_dir, ['pos_loss', 'pos_idx'], [pos_loss, np.array([i for i in range(len(pos_loss))]).reshape(-1,1)])
+        
+        
+        for sample in tqdm(neg_query_imgs):    
+            neg_loss_item, plt_neg_idx_item = custom_knn(syn_imgs, sample, custom_loss, args) #find closest negative image
+            neg_loss.append(neg_loss_item)
+            plt_neg_idx.append(plt_neg_idx_item)
+        neg_loss = np.array(neg_loss).reshape(-1, 1)
+        plt_neg_idx = np.array(plt_neg_idx).reshape(-1, 1)
+        save_files(save_dir, ['neg_loss', 'neg_idx'], [neg_loss, np.array([i for i in range(len(pos_loss))]).reshape(-1,1)])
+
+        ### positive query
+
+        plot_closest_images(plt_pos_idx, pos_query_imgs, syn_imgs, save_dir, 'pos')
+
+        ### negative query
+
+        plot_closest_images(plt_neg_idx, neg_query_imgs, syn_imgs, save_dir, 'neg')
 
 
 def update_args(args, config_dict):
@@ -162,7 +187,7 @@ def update_args(args, config_dict):
 if __name__ == '__main__':
 
     args = parse_arguments()
-    args.local_config='attack_models/config_attack_fbb.yaml'
+    #args.local_config = 'attack_models/config_attack_fbb.yaml'
     if args.local_config is not None:
         with open(str(args.local_config), "r") as f:
             config = yaml.safe_load(f)

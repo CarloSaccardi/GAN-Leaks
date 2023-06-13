@@ -1,2 +1,2 @@
-N_splits: [2, 10] #Number of Gen_disc pairs
-privacy_ratio: [5, 10]
+privacy_ratio: [0.1, 5, 10]
+N_splits: [2, 5, 10]
