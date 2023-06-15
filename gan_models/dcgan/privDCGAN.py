@@ -227,29 +227,18 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
         dp_t = np.zeros(batchCount*args.N_splits)
         g_t = np.zeros((batchCount, args.N_splits))
 
-        labels_list = [[] for _ in range(args.N_splits)]
-        noise_list = [[] for _ in range(args.N_splits)]
-        fake_list = [[] for _ in range(args.N_splits)]
-
         ###### TRAIN DISCRIMINATORS for one epoch ######
         #for each dataloader in dataloader_N, train the discriminator
-        for j in range(batchCount):
+        for split in range(args.N_splits):
 
-            discS.zero_grad() 
 
-            for split in range(args.N_splits):
-
-                loader = [ (i, (imgs, labels)) for i, (imgs, labels) in enumerate(X_loaders[split])]
-                i, (imgs, labels) = loader[j]
+            for i, (imgs, labels) in enumerate(X_loaders[split]):
 
                 imgs = imgs.to(device)
                 labels = labels.to(device)
                 noise = torch.randn(imgs.shape[0], args.nz, 1, 1).to(device)
                 fake = genS(noise, split)
 
-                labels_list[split].append(labels)
-                noise_list[split].append(noise)
-                fake_list[split].append(fake)
 
                 # train discriminator --> max log(D(x)) + log(1 - D(G(z)))
                 disc_real = discS(imgs, split).reshape(-1)
@@ -258,44 +247,29 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 lossD_fake = criterion(disc_fake, torch.zeros_like(disc_fake))
                 lossD = (lossD_real + lossD_fake) / 2
 
+                discS.zero_grad()
                 lossD.backward()
-                d_t[j][split] = lossD.item()
-
-            opt_disc.step()
+                d_t[i][split] = lossD.item()
+                opt_disc.step()
 
         ##########################################################################################
 
         ###### TRAIN PRIVATE DISCRIMINATOR for one epoch ######
         #train private discriminator --> max log(Di_p(G(z)))
-        if epoch > args.dp_delay:
+                if epoch > args.dp_delay:
 
-            fake_tensor = torch.cat([element for inner_list in fake_list for element in inner_list], dim=0)
-            labels_tensor = torch.cat([element for inner_list in labels_list for element in inner_list], dim=0)
-            dataset = TensorDataset(fake_tensor, labels_tensor)
-            loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+                    output = private_disc(fake.detach()).reshape(-1, args.N_splits)
 
-            for i, (fake, labels) in enumerate(loader):
-                output = private_disc(fake.detach()).reshape(-1, args.N_splits)
+                    loss_Dp = loss_fn(output, labels)
 
-                loss_Dp = loss_fn(output, labels)
+                    private_disc.zero_grad()
+                    loss_Dp.backward()
+                    opt_private_disc.step()
 
-                private_disc.zero_grad()
-                loss_Dp.backward()
-                opt_private_disc.step()
-
-                dp_t[i] = loss_Dp.item()
+                    dp_t[i] = loss_Dp.item()
         ##########################################################################################
                 
         ###### TRAIN GENERATORs for one epoch ######
-        for j in range(batchCount):
-
-            genS.zero_grad() 
-
-            for split in range(args.N_splits):
-
-                noise = noise_list[split][j]
-                fake = genS(noise, split)
-                
                 l = list(range(args.N_splits))
                 del(l[split])
                 gen_y =  torch.tensor(np.random.choice( l, fake.shape[0] , replace=True), dtype=torch.float32).to(device)
@@ -307,12 +281,12 @@ def train_privGAN(genS, discS, private_disc, opt_gen, opt_disc, opt_private_disc
                 lossG_1 = criterion(output1, torch.ones_like(output1))
                 lossG_2 = args.privacy_ratio * loss_fn(output2, gen_y.long())
                 
-                lossG = lossG_1 + lossG_2 if epoch > args.dp_delay else lossG_1
- 
+                lossG = lossG_1 + lossG_2 
+
+                genS.zero_grad()
                 lossG.backward() 
-                g_t[j][split] = lossG.item()
-                
-            opt_gen.step()
+                g_t[i][split] = lossG.item()
+                opt_gen.step()
         ##########################################################################################
 
 
