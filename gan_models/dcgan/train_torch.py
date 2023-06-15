@@ -36,6 +36,7 @@ parser.add_argument('--beta2', type=float, default=0.999, help='beta2 for adam. 
 parser.add_argument('--data_path', type=str, default='miniCelebA', help='name of the dataset, either miniCelebA or CelebA')
 parser.add_argument("--wandb", default=None, help="Specify project name to log using WandB")
 parser.add_argument('--local_config', default=None, help='path to config file')
+parser.add_argument('--num_generated', type=int, default=2040, help='number of generated images, default=2040')
 
 parser.add_argument("--PATH", type=str, default=os.path.join(os.getcwd(), 'ersecki-thesis','model_save', 'dcgan'), help="Directory to save model")
 parser.add_argument("--PATH_syn_data", type=str, default=os.path.join(os.getcwd(), 'ersecki-thesis', 'syn_data', 'dcgan'), help="Directory to save synthetic data")
@@ -62,7 +63,7 @@ def main():
                     transforms.Normalize([0.5 for _ in range(args.nc)], [0.5 for _ in range(args.nc)])
                     ])
     
-    datasetPositive = CustomDataset(root= args.data_path, transform=transform)
+    datasetPositive = CustomDataset(root= args.data_path, labels=None, transform=transform)
     dataloader = torch.utils.data.DataLoader(datasetPositive, batch_size=args.batch_size, shuffle=True)
 
     fixed_noise = torch.randn(1, args.nz, 1, 1, device=device)    
@@ -149,7 +150,7 @@ def main():
         gen.eval()
 
         with torch.no_grad():
-            noise = torch.randn(args.batch_size, args.nz, 1, 1, device=device)
+            noise = torch.randn(args.num_generated, args.nz, 1, 1, device=device)
             normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
             to_pil = transforms.ToPILImage()
 

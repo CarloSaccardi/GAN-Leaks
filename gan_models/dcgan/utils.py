@@ -8,8 +8,7 @@ class CustomDataset(Dataset):
         self.root = root
         self.transform = transform
         self.img_list = os.listdir(root)
-        if labels is not None:
-            self.labels = labels
+        self.labels = labels
 
     def __len__(self):
         return len(self.img_list)

@@ -268,169 +268,172 @@ def main():
 
         print(args)
 
-    if args.training:
-
-        genS = stackGenerators(args.nz, args.in_channels, args.nc, args.N_splits).to(device)
-        criticS = stackDiscriminators(args.in_channels, args.nc, args.N_splits).to(device)
-        private_critic = PrivateDiscriminator(args.in_channels, args.N_splits, args.nc).to(device)
-        
-        #initilize optimizers and scalers for FP16 training
-        opt_gen = torch.optim.Adam(genS.parameters(), lr=args.lr, betas=(0.0, 0.99))
-        opt_critic = torch.optim.Adam(criticS.parameters(), lr=args.lr, betas=(0.0, 0.99))
-        opt_private_critic = torch.optim.Adam(private_critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
-        scaler_gen = torch.cuda.amp.GradScaler()
-        scaler_critic = torch.cuda.amp.GradScaler()
-        loss_fn = torch.nn.CrossEntropyLoss()
-        
-        ####################### PRETRAIN DISCRIMINATOR ############################
-        private_critic.train()
-        step_pretrain = int(log2(args.start_img_size / 4))
-
-        for num_epochs in pretrain_disc_epochs[step_pretrain:]:
-            alpha = 1e-5 #increase to 1 over the course of the epoch
-            _, _, loader, _ = get_loader(4*2**step_pretrain)
-            print(f"image resolution: {4*2**step_pretrain}x{4*2**step_pretrain}")
-
-            for epoch in range(num_epochs):
-
-                loss_CRITIC,  alpha = train_fn_pretrain(private_critic, 
-                                                        step_pretrain, 
-                                                        alpha, 
-                                                        opt_private_critic,  
-                                                        loss_fn, 
-                                                        loader)
-
-                #print the losses for every epoch
-                print("pre-train private discriminator loss: ", loss_CRITIC.item(), "epoch: ", epoch)
-
-            
-            step_pretrain += 1
-        ############################################################################
-
-        ####################### TRAIN privPGGAN ############################
-
-        genS.train()
-        criticS.train()
-        step = int(log2(args.start_img_size / 4))
-
-        for num_epochs in PROGRESSIVE_EPOCHS[step:]:
-            alpha = 1e-5 #increase to 1 over the course of the epoch
-            X_loaders, _, loader, t = get_loader(4*2**step)
-            print(f"image resolution: {4*2**step}x{4*2**step}")
-
-            batch_size = args.batch_size[int(log2(4*2**step) / 4)]
-
-            for epoch in range(num_epochs):
-                
-                loss_CRITIC_list = []
-                loss_GEN_list = []
-                loss_DP_list = []
-
-                for split in range(args.N_splits):
-
-                    loss_CRITIC, loss_GEN, loss_DP, alpha = train_fn(
-                                                                    criticS, 
-                                                                    genS,
-                                                                    private_critic, 
-                                                                    step, 
-                                                                    alpha,
-                                                                    opt_critic, 
-                                                                    opt_gen, 
-                                                                    opt_private_critic,
-                                                                    scaler_critic, 
-                                                                    scaler_gen, 
-                                                                    loss_fn,
-                                                                    X_loaders[split],
-                                                                    split)
-                    loss_CRITIC_list.append(loss_CRITIC)
-                    loss_GEN_list.append(loss_GEN)
-                    loss_DP_list.append(loss_DP)
-                
-                with torch.no_grad():
-                    loss_CRITIC = sum(loss_CRITIC_list)/len(loss_CRITIC_list)
-                    loss_GEN = sum(loss_GEN_list)/len(loss_GEN_list)
-                    loss_DP = sum(loss_DP_list)/len(loss_DP_list)
-                        ##print losses, epoch and split
-                    print("discriminator loss: ", loss_CRITIC.item(), "DP loss: ", loss_DP, "generator loss: ", loss_GEN.item(),"epoch: ", epoch)
-
-                
-            step += 1
-        ############################################################################
-
-    if args.save_model:
-
-        dirname = os.path.join(args.PATH, timestamp)
-
-        os.makedirs(dirname, exist_ok=True)
-        torch.save(genS.state_dict(), os.path.join(dirname, f"gen.pth") )
-        torch.save(criticS.state_dict(), os.path.join(dirname, f"critic.pth") )
-        torch.save(private_critic.state_dict(), os.path.join(dirname, "private_critic.pth"))
-
-    if args.generate:
-        #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
-
-        gen = stackGenerators(args.nz, args.in_channels, args.nc, args.N_splits).to(device)
-
-        if args.params_keys is None:
-            dirname = os.path.join(args.PATH, timestamp)
-        else:
-            dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
-
         if args.training:
-            gen.load_state_dict(torch.load(os.path.join(dirname, "gen.pth")))
-        else:
-            assert args.saved_model_name is not None, "Please specify the saved model name"
-            assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
-            gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen.pth")))
-        
-        gen.eval()
 
-        with torch.no_grad():
-            batch_size = 32  # Specify the batch size for generating images
+            genS = stackGenerators(args.nz, args.in_channels, args.nc, args.N_splits).to(device)
+            criticS = stackDiscriminators(args.in_channels, args.nc, args.N_splits).to(device)
+            private_critic = PrivateDiscriminator(args.in_channels, args.N_splits, args.nc).to(device)
+            
+            #initilize optimizers and scalers for FP16 training
+            opt_gen = torch.optim.Adam(genS.parameters(), lr=args.lr, betas=(0.0, 0.99))
+            opt_critic = torch.optim.Adam(criticS.parameters(), lr=args.lr, betas=(0.0, 0.99))
+            opt_private_critic = torch.optim.Adam(private_critic.parameters(), lr=args.lr, betas=(0.0, 0.99))
+            scaler_gen = torch.cuda.amp.GradScaler()
+            scaler_critic = torch.cuda.amp.GradScaler()
+            loss_fn = torch.nn.CrossEntropyLoss()
+            
+            ####################### PRETRAIN DISCRIMINATOR ############################
+            private_critic.train()
+            step_pretrain = int(log2(args.start_img_size / 4))
 
-            num_batches = math.ceil(args.num_generated / batch_size)
-            #create empty tensor for noise and fake images
-            noise = torch.empty((args.num_generated, args.nz, 1, 1), device=device)
-            fake = torch.empty((args.num_generated, args.nc, args.image_size, args.image_size), device=device)
+            for num_epochs in pretrain_disc_epochs[step_pretrain:]:
+                alpha = 1e-5 #increase to 1 over the course of the epoch
+                _, _, loader, _ = get_loader(4*2**step_pretrain)
+                print(f"image resolution: {4*2**step_pretrain}x{4*2**step_pretrain}")
 
-            for batch_idx in range(num_batches):
-                batch_start = batch_idx * batch_size
-                batch_end = min(batch_start + batch_size, args.num_generated)
+                for epoch in range(num_epochs):
 
-                batch_noise = torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
-                normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
-                to_pil = transforms.ToPILImage()
+                    loss_CRITIC,  alpha = train_fn_pretrain(private_critic, 
+                                                            step_pretrain, 
+                                                            alpha, 
+                                                            opt_private_critic,  
+                                                            loss_fn, 
+                                                            loader)
 
-                batch_fake = gen(batch_noise, 4, 1, 0).detach().cpu()
-                batch_fake = normalize(batch_fake)
-               
-                noise[batch_start:batch_end] = batch_noise
-                fake[batch_start:batch_end] = batch_fake
+                    #print the losses for every epoch
+                    print("pre-train private discriminator loss: ", loss_CRITIC.item(), "epoch: ", epoch)
+
+                
+                step_pretrain += 1
+            ############################################################################
+
+            ####################### TRAIN privPGGAN ############################
+
+            genS.train()
+            criticS.train()
+            step = int(log2(args.start_img_size / 4))
+
+            for num_epochs in PROGRESSIVE_EPOCHS[step:]:
+                alpha = 1e-5 #increase to 1 over the course of the epoch
+                X_loaders, _, loader, t = get_loader(4*2**step)
+                print(f"image resolution: {4*2**step}x{4*2**step}")
+
+                batch_size = args.batch_size[int(log2(4*2**step) / 4)]
+
+                for epoch in range(num_epochs):
+                    
+                    loss_CRITIC_list = []
+                    loss_GEN_list = []
+                    loss_DP_list = []
+
+                    for split in range(args.N_splits):
+
+                        loss_CRITIC, loss_GEN, loss_DP, alpha = train_fn(
+                                                                        criticS, 
+                                                                        genS,
+                                                                        private_critic, 
+                                                                        step, 
+                                                                        alpha,
+                                                                        opt_critic, 
+                                                                        opt_gen, 
+                                                                        opt_private_critic,
+                                                                        scaler_critic, 
+                                                                        scaler_gen, 
+                                                                        loss_fn,
+                                                                        X_loaders[split],
+                                                                        split)
+                        loss_CRITIC_list.append(loss_CRITIC)
+                        loss_GEN_list.append(loss_GEN)
+                        loss_DP_list.append(loss_DP)
+                    
+                    with torch.no_grad():
+                        loss_CRITIC = sum(loss_CRITIC_list)/len(loss_CRITIC_list)
+                        loss_GEN = sum(loss_GEN_list)/len(loss_GEN_list)
+                        loss_DP = sum(loss_DP_list)/len(loss_DP_list)
+                            ##print losses, epoch and split
+                        print("discriminator loss: ", loss_CRITIC.item(), "DP loss: ", loss_DP, "generator loss: ", loss_GEN.item(),"epoch: ", epoch)
+
+                    
+                step += 1
+            ############################################################################
+
+        if args.save_model:
+
+            if args.params_keys is None:
+                dirname = os.path.join(args.PATH, timestamp)
+            else:
+                dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
+
+            os.makedirs(dirname, exist_ok=True)
+            torch.save(genS.state_dict(), os.path.join(dirname, f"gen.pth") )
+            torch.save(criticS.state_dict(), os.path.join(dirname, f"critic.pth") )
+            torch.save(private_critic.state_dict(), os.path.join(dirname, "private_critic.pth"))
+
+        if args.generate:
+            #load the saved model, generate args.batch_size synthetic data, and save them as .npz file
+
+            gen = stackGenerators(args.nz, args.in_channels, args.nc, args.N_splits).to(device)
+
+            if args.params_keys is None:
+                dirname = os.path.join(args.PATH, timestamp)
+            else:
+                dirname = os.path.join(args.PATH, args.params_keys, args.params_values)
+
+            if args.training:
+                gen.load_state_dict(torch.load(os.path.join(dirname, "gen.pth")))
+            else:
+                assert args.saved_model_name is not None, "Please specify the saved model name"
+                assert args.wandb == None, "No need to load anything to wand when only generating synthetic data"
+                gen.load_state_dict(torch.load(os.path.join(args.saved_model_name, "gen.pth")))
+            
+            gen.eval()
+
+            with torch.no_grad():
+                batch_size = 32  # Specify the batch size for generating images
+
+                num_batches = math.ceil(args.num_generated / batch_size)
+                #create empty tensor for noise and fake images
+                noise = torch.empty((args.num_generated, args.nz, 1, 1), device=device)
+                fake = torch.empty((args.num_generated, args.nc, args.image_size, args.image_size), device=device)
+
+                for batch_idx in range(num_batches):
+                    batch_start = batch_idx * batch_size
+                    batch_end = min(batch_start + batch_size, args.num_generated)
+
+                    batch_noise = torch.randn(batch_end - batch_start, args.nz, 1, 1, device=device)
+                    normalize = transforms.Normalize(mean=[-1, -1, -1], std=[2, 2, 2])
+                    to_pil = transforms.ToPILImage()
+
+                    batch_fake = gen(batch_noise, 4, 1, 0).detach().cpu()
+                    batch_fake = normalize(batch_fake)
+                
+                    noise[batch_start:batch_end] = batch_noise
+                    fake[batch_start:batch_end] = batch_fake
+
+                    if args.params_keys is None:
+                        dirname = os.path.join(args.PATH_syn_data, 'png_images', timestamp)
+                    else:
+                        dirname = os.path.join(args.PATH_syn_data, 'png_images', args.params_keys, args.params_values)
+                    os.makedirs(dirname, exist_ok=True)
+                    for i, img in enumerate(batch_fake):
+                        pil_img = to_pil(img)
+                        save_path = os.path.join(dirname, f"image_{batch_start + i}.png")
+                        pil_img.save(save_path)
 
                 if args.params_keys is None:
-                    dirname = os.path.join(args.PATH_syn_data, 'png_images', timestamp)
+                    dirname = os.path.join(args.PATH_syn_data, 'npz_images', timestamp)
                 else:
-                    dirname = os.path.join(args.PATH_syn_data, 'png_images', args.params_keys, args.params_values)
+                    dirname = os.path.join(args.PATH_syn_data, 'npz_images', args.params_keys, args.params_values)
+                os.makedirs(dirname, exist_ok=True) 
+                np.savez(os.path.join(dirname, f"pggan_images.npz"), fake=fake.cpu())
+
+                if args.params_keys is None:
+                    dirname = os.path.join(args.PATH_syn_data, 'npz_noise', timestamp)
+                else:
+                    dirname = os.path.join(args.PATH_syn_data, 'npz_noise', args.params_keys, args.params_values)
                 os.makedirs(dirname, exist_ok=True)
-                for i, img in enumerate(batch_fake):
-                    pil_img = to_pil(img)
-                    save_path = os.path.join(dirname, f"image_{batch_start + i}.png")
-                    pil_img.save(save_path)
-
-            if args.params_keys is None:
-                dirname = os.path.join(args.PATH_syn_data, 'npz_images', timestamp)
-            else:
-                dirname = os.path.join(args.PATH_syn_data, 'npz_images', args.params_keys, args.params_values)
-            os.makedirs(dirname, exist_ok=True) 
-            np.savez(os.path.join(dirname, f"pggan_images.npz"), fake=fake.cpu())
-
-            if args.params_keys is None:
-                dirname = os.path.join(args.PATH_syn_data, 'npz_noise', timestamp)
-            else:
-                dirname = os.path.join(args.PATH_syn_data, 'npz_noise', args.params_keys, args.params_values)
-            os.makedirs(dirname, exist_ok=True)
-            np.savez(os.path.join(dirname, f"pggan_noise.npz"), noise=noise.cpu())
-            
+                np.savez(os.path.join(dirname, f"pggan_noise.npz"), noise=noise.cpu())
+                
                                 
 
                     
