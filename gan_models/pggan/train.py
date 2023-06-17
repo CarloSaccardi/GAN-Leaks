@@ -58,6 +58,8 @@ def update_args(args, config_dict):
     for key, val in config_dict.items():
         setattr(args, key, val)  
 
+#args.local_config= 'gan_models/pggan/pggan_config.yaml'
+
 if args.local_config is not None:
     with open(str(args.local_config), "r") as f:
         config = yaml.safe_load(f)

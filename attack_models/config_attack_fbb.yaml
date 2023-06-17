@@ -1,9 +1,9 @@
 ############ ATTACK ##########
-exp_name: privDCGAN
-syn_data_path: ersecki-thesis/syn_data/privDCGAN/png_images/privacy_ratio-N_splits
+exp_name: privPGGAN_10020
+syn_data_path: ersecki-thesis/syn_data/dcgan_10020/png_images/_2023_06_16__14_00_23
 pos_data_dir: data/celebAhuge_positive
 neg_data_dir: data/celebAhuge_negative
-hyperparameter_search: True
+hyperparameter_search: False
 K: 1
 BATCH_SIZE: 64
 

@@ -5,7 +5,7 @@ generate: True
 batch_size: 32
 num_generated: 2040
 #### privDCGAN parameters #####
-N_splits: 2
-privacy_ratio: 5
-dp_delay: 0
-disc_epochs: 0
+#N_splits: 2
+#privacy_ratio: 5
+#dp_delay: 50
+#disc_epochs: 25

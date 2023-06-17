@@ -8,7 +8,7 @@ import random
 import numpy as np
 # Parse command line arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_images', type=float, default=2040,
+parser.add_argument('--num_images', type=int, default=10020,
                     help='the number of images to move to the two directories')
 parser.add_argument('--identity_annotations', type=str, default='data/identities_ann.txt',
                     help='the path to the identity annotations file')
@@ -21,15 +21,14 @@ parser.add_argument('--output_dir1', type=str, default='data/celebAhuge_positive
 parser.add_argument('--output_dir2', type=str, default='data/celebAhuge_negative',
                     help='the path to the second output directory')
 parser.add_argument('--img_size', type=int, default=64, 
-                    help='the height / width of the input image to network')
+                    help='the height / width of the input image  to network')
 parser.add_argument('--local_config', default=None, 
                     help='path to config file')
 parser.add_argument('--num_same_id', type=int, default=30,
                     help='identity is considered if it has at least this number of images')
 
-args = parser.parse_args()
 
-def main():
+def main(args):
 
     #Read the identity annotations file
     diz = {}
@@ -135,17 +134,7 @@ def random_crop(img, crop_size=(10, 10)):
 
 if __name__ == '__main__':
 
-    if args.local_config is not None:
+    args = parser.parse_args()
+    print(args)
 
-        with open(str(args.local_config), "r") as f:
-            config = yaml.safe_load(f)
-        update_args(args, config)
-
-        if not args.ailab:
-            import wandb #wandb is not supported on ailab server 
-            
-            # update_args(args, dict(run.config))
-    else:
-        warnings.warn("No config file was provided. Using default parameters.")
-
-    main()
+    main(args)

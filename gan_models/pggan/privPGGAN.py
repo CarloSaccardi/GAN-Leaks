@@ -169,7 +169,7 @@ def train_fn(criticS,
             critic_real = criticS(real,  step, alpha, split)
             critic_fake = criticS(fake.detach(), step, alpha, split)
             
-            gp = gradient_penalty(criticS, real, fake, alpha, step, split, device)
+            gp = gradient_penalty(criticS, real, fake, alpha, step, device, split=split)
             loss_critic = (
                 -(torch.mean(critic_real) - torch.mean(critic_fake)) 
                 + args.lambda_gp * gp
